@@ -21,3 +21,15 @@ INSERT INTO alerts (
     "Fire - Structure Fire - 2004 Benton Street - Boone",
     "111111111111"
 );
+
+INSERT INTO alerts (
+    alert_id,
+    organization,
+    body,
+    audio_url
+) VALUES (
+    "22222222-2222-2222-2222-222222222222",
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "Medical - Headache - 1116 Linn Street - Boone",
+    "222222222222"
+);

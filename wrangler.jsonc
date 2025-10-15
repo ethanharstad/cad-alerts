@@ -31,6 +31,13 @@
 			"database_id": "c7e94055-0aba-4602-879f-5c26fc04a1e3"
 		}
 	],
+	"workflows": [
+		{
+			"name": "alert-workflow",
+			"binding": "alert-workflow",
+			"class_name": "AlertWorkflow"
+		}
+	],
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables

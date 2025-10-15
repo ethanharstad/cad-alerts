@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception';
+import { WorkerEntrypoint, WorkflowStep, WorkflowEvent, WorkflowEntrypoint } from 'cloudflare:workers';
 
 export interface Env {
 	db: D1Database;
@@ -31,5 +32,15 @@ app.get('/org/:organizationKey/alerts', async (c) => {
 	}
 	return c.json(alerts);
 });
+
+export function email(message: ForwardableEmailMessage, env: Env, ctx: Object) {
+	console.log(message);
+}
+
+export class AlertWorkflow extends WorkflowEntrypoint<Env, Params> {
+	async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
+		let a = await step.do("first step", async () => { });
+	}
+}
 
 export default app
