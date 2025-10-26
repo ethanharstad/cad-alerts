@@ -34,10 +34,26 @@
 	"workflows": [
 		{
 			"name": "alert-workflow",
-			"binding": "alert-workflow",
+			"binding": "alert_workflow",
 			"class_name": "AlertWorkflow"
 		}
 	],
+	"ai": {
+		"binding": "ai"
+	},
+	"secrets_store_secrets": [
+		{
+			"binding": "ai_key",
+			"store_id": "65e83f38f633459b9516715daa585c4a",
+			"secret_name": "sar_openai_default"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "bucket",
+			"bucket_name": "cad-tts"
+		}
+	]
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
