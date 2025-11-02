@@ -3,7 +3,6 @@ import { HTTPException } from 'hono/http-exception';
 import { WorkflowStep, WorkflowEvent, WorkflowEntrypoint } from 'cloudflare:workers';
 import PostalMime from 'postal-mime';
 import OpenAI from "openai";
-import { buffer } from 'stream/consumers';
 import { NonRetryableError } from 'cloudflare:workflows';
 
 export interface Env {
@@ -19,6 +18,13 @@ type OrgRow = {
 	org_key: string;
 	access_key: string;
 	name: string;
+}
+
+type AlertRow = {
+	alert_id: string;
+	organization: string;
+	body: string;
+	audio_url: string;
 }
 
 const PREALERT_PROMPT_INSTRUCTIONS = `
@@ -82,7 +88,7 @@ app.get('/org/:organizationKey', async (c) => {
 	const stmt = db
 		.prepare("SELECT * FROM organizations WHERE org_key = ?")
 		.bind(organizationKey);
-	const organization = await stmt.first();
+	const organization = await stmt.first<OrgRow>();
 	if (!organization) {
 		throw new HTTPException(404);
 	}
@@ -94,7 +100,7 @@ app.get('/org/:organizationKey/alerts', async (c) => {
 	const stmt = db
 		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ?;")
 		.bind(organizationKey);
-	const alerts = await stmt.all();
+	const alerts = await stmt.all<AlertRow>();
 	if (!alerts) {
 		throw new HTTPException(404);
 	}
