@@ -116,12 +116,12 @@ type WorkflowParams = {
 export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep) {
 		const openai = new OpenAI({
-				apiKey: await this.env.ai_key.get(),
-				baseURL: await this.env.ai.gateway("sar").getUrl("openai"),
-				defaultHeaders: {
-					"cf-aig-authorization": "Bearer uVJLoTF5deDPGWmDFuqgOVcxaroehwyBCxVE3ynY",
-				}
-			});
+			apiKey: await this.env.ai_key.get(),
+			baseURL: await this.env.ai.gateway("sar").getUrl("openai"),
+			defaultHeaders: {
+				"cf-aig-authorization": "Bearer uVJLoTF5deDPGWmDFuqgOVcxaroehwyBCxVE3ynY",
+			}
+		});
 		const org_id = await step.do('Get Org', async () => {
 			const emails = event.payload.emailTo.split(',');
 			const org_key = emails[0].split('@')[0];
@@ -180,17 +180,21 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 // Email Handler
 async function email(message: ForwardableEmailMessage, env: Env, _ctx: any) {
 	const msg = await PostalMime.parse(message.raw);
-    console.log({
-      message: msg
-    });
-    
-    let instance = await env.alert_workflow.create({
-      params: {
-        emailFrom: msg.from?.address,
-        emailTo: msg.to?.map((x) => x.address).join(','),
-        emailText: msg.text?.trim()
-      }
-    });
+	console.log(`to: ${message.to}`);
+	console.log(`deliveredTo: ${msg.deliveredTo}`);
+	console.log(`returnPath: ${msg.returnPath}`);
+	console.log({
+		message: msg,
+		deliveredTo: msg.deliveredTo,
+		returnPath: msg.returnPath
+	});
+	let instance = await env.alert_workflow.create({
+		params: {
+			emailFrom: msg.from?.address,
+			emailTo: message.to,
+			emailText: msg.text?.trim()
+		}
+	});
 }
 
 export default {
