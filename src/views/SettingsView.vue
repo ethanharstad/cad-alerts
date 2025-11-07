@@ -3,6 +3,13 @@
     <div class="settings-container">
       <h1>Settings</h1>
 
+      <div class="info-banner">
+        <p>
+          <strong>Required Configuration:</strong> Both Organization Key and Organization Secret
+          must be configured to use the application.
+        </p>
+      </div>
+
       <form @submit.prevent="saveSettings" class="settings-form">
         <div class="form-group">
           <label for="organizationKey">Organization Key</label>
@@ -86,8 +93,22 @@ const clearSettings = () => {
 }
 
 h1 {
-  margin-bottom: 2rem;
+  margin-bottom: 1rem;
   color: var(--color-heading);
+}
+
+.info-banner {
+  background: #e7f3ff;
+  border: 1px solid #b3d9ff;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.info-banner p {
+  margin: 0;
+  color: #004085;
+  font-size: 0.9rem;
 }
 
 .settings-form {
