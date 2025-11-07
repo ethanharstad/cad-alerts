@@ -25,6 +25,7 @@ type AlertRow = {
 	organization: string;
 	body: string;
 	audio_url: string;
+	timestamp: number;
 }
 
 const PREALERT_PROMPT_INSTRUCTIONS = `
@@ -33,6 +34,7 @@ Parse provided dispatch messages into clear, pre-alert messages for emergency re
 
 # Instructions
 - Extract and expand abbreviations where confident, particularly for addresses and numerics like 1st 2nd.
+- Do not repeat the same word twice in a row.
 - Each message must include:
   - The type of emergency (call type).
   - The full address of the emergency.
@@ -170,8 +172,8 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		});
 		await step.do('Save Record', async () => {
 			await this.env.db
-				.prepare('INSERT INTO alerts (alert_id, organization, body, audio_url) VALUES (?1, ?2, ?3, ?4)')
-				.bind(event.instanceId, org_id, parsed, audio_url)
+				.prepare('INSERT INTO alerts (alert_id, organization, body, audio_url, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)')
+				.bind(event.instanceId, org_id, parsed, audio_url, Date.now())
 				.run();
 		});
 	}
@@ -180,21 +182,19 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 // Email Handler
 async function email(message: ForwardableEmailMessage, env: Env, _ctx: any) {
 	const msg = await PostalMime.parse(message.raw);
-	console.log(`to: ${message.to}`);
-	console.log(`deliveredTo: ${msg.deliveredTo}`);
-	console.log(`returnPath: ${msg.returnPath}`);
 	console.log({
-		message: msg,
-		deliveredTo: msg.deliveredTo,
-		returnPath: msg.returnPath
+		message: msg
 	});
-	let instance = await env.alert_workflow.create({
-		params: {
-			emailFrom: msg.from?.address,
-			emailTo: message.to,
-			emailText: msg.text?.trim()
-		}
-	});
+	const subject = msg.subject || "";
+	if (subject.toLowerCase().includes("pre-alert")) {
+		let instance = await env.alert_workflow.create({
+			params: {
+				emailFrom: msg.from?.address,
+				emailTo: message.to,
+				emailText: msg.text?.trim()
+			}
+		});
+	}
 }
 
 export default {
