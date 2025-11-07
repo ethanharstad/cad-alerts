@@ -26,6 +26,7 @@ type AlertRow = {
 	body: string;
 	audio_url: string;
 	timestamp: number;
+	source: string;
 }
 
 const PREALERT_PROMPT_INSTRUCTIONS = `
@@ -172,8 +173,8 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		});
 		await step.do('Save Record', async () => {
 			await this.env.db
-				.prepare('INSERT INTO alerts (alert_id, organization, body, audio_url, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)')
-				.bind(event.instanceId, org_id, parsed, audio_url, Date.now())
+				.prepare('INSERT INTO alerts (alert_id, organization, body, audio_url, timestamp, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
+				.bind(event.instanceId, org_id, parsed, audio_url, Date.now(), event.payload.emailText)
 				.run();
 		});
 	}
