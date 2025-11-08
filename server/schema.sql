@@ -12,5 +12,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     organization TEXT,
     body TEXT,
     audio_url TEXT,
+    timestamp INTEGER,
+    source TEXT,
     FOREIGN KEY(organization) REFERENCES organizations(org_id)
 );
