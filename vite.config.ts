@@ -10,7 +10,7 @@ import { cloudflare } from "@cloudflare/vite-plugin"
 export default defineConfig({
 	plugins: [
 		vue(),
-		vueDevTools(),
+		// vueDevTools(),
 		cloudflare()
 	],
 	resolve: {
