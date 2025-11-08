@@ -80,8 +80,6 @@ onMounted(() => {
 <template>
   <main class="home">
     <div class="home-container">
-      <h1>Home</h1>
-
       <div v-if="loading" class="status-message loading">
         <p>Loading organization...</p>
       </div>
