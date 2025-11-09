@@ -4,6 +4,9 @@ import { WorkflowStep, WorkflowEvent, WorkflowEntrypoint } from 'cloudflare:work
 import PostalMime from 'postal-mime';
 import OpenAI from "openai";
 import { NonRetryableError } from 'cloudflare:workflows';
+import { drizzle } from 'drizzle-orm/d1';
+import { eq, desc, and } from 'drizzle-orm';
+import { organizations, alerts, type Organization, type Alert } from './schema';
 
 export interface Env {
 	bucket: R2Bucket;
@@ -11,22 +14,6 @@ export interface Env {
 	alert_workflow: Workflow;
 	ai: Ai;
 	ai_key: SecretsStoreSecret;
-}
-
-type OrgRow = {
-	org_id: string;
-	org_key: string;
-	access_key: string;
-	name: string;
-}
-
-type AlertRow = {
-	alert_id: string;
-	organization: string;
-	body: string;
-	audio_url: string;
-	timestamp: number;
-	source: string;
 }
 
 const PREALERT_PROMPT_INSTRUCTIONS = `
@@ -87,11 +74,12 @@ Speak in a clear tone appropriate for dispatching emergency units over the radio
 const app = new Hono<{ Bindings: Env }>().basePath('/api/');
 app.get('/org/:organizationKey', async (c) => {
 	const organizationKey = c.req.param('organizationKey');
-	const db = c.env.db;
-	const stmt = db
-		.prepare("SELECT * FROM organizations WHERE org_key = ?")
-		.bind(organizationKey);
-	const organization = await stmt.first<OrgRow>();
+	const db = drizzle(c.env.db);
+	const organization = await db
+		.select()
+		.from(organizations)
+		.where(eq(organizations.org_key, organizationKey))
+		.get();
 	if (!organization) {
 		throw new HTTPException(404);
 	}
@@ -99,27 +87,46 @@ app.get('/org/:organizationKey', async (c) => {
 });
 app.get('/org/:organizationKey/alerts', async (c) => {
 	const organizationKey = await c.req.param('organizationKey');
-	const db = c.env.db;
-	const stmt = db
-		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ? ORDER BY timestamp DESC LIMIT 5;")
-		.bind(organizationKey);
-	const alerts = await stmt.all<AlertRow>();
-	if (!alerts) {
-		throw new HTTPException(404);
-	}
-	return c.json(alerts.results);
+	const db = drizzle(c.env.db);
+	const alertsList = await db
+		.select({
+			alert_id: alerts.alert_id,
+			organization: alerts.organization,
+			body: alerts.body,
+			audio_url: alerts.audio_url,
+			timestamp: alerts.timestamp,
+			source: alerts.source,
+		})
+		.from(alerts)
+		.innerJoin(organizations, eq(alerts.organization, organizations.org_id))
+		.where(eq(organizations.org_key, organizationKey))
+		.orderBy(desc(alerts.timestamp))
+		.limit(5);
+	return c.json(alertsList);
 });
 
 app.get('/org/:organizationKey/alerts/:alertId/audio', async (c) => {
 	const organizationKey = c.req.param('organizationKey');
 	const alertId = c.req.param('alertId');
-	const db = c.env.db;
+	const db = drizzle(c.env.db);
 
 	// Get the alert and verify it belongs to the organization
-	const stmt = db
-		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ? AND alerts.alert_id = ?")
-		.bind(organizationKey, alertId);
-	const alert = await stmt.first<AlertRow>();
+	const alert = await db
+		.select({
+			alert_id: alerts.alert_id,
+			organization: alerts.organization,
+			body: alerts.body,
+			audio_url: alerts.audio_url,
+			timestamp: alerts.timestamp,
+			source: alerts.source,
+		})
+		.from(alerts)
+		.innerJoin(organizations, eq(alerts.organization, organizations.org_id))
+		.where(and(
+			eq(organizations.org_key, organizationKey),
+			eq(alerts.alert_id, alertId)
+		))
+		.get();
 
 	if (!alert) {
 		throw new HTTPException(404, { message: 'Alert not found' });
@@ -164,10 +171,12 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		const org_id = await step.do('Get Org', async () => {
 			const emails = event.payload.emailTo.split(',');
 			const org_key = emails[0].split('@')[0];
-			const result = await this.env.db
-				.prepare('SELECT org_id FROM organizations WHERE org_key = ?')
-				.bind(org_key)
-				.first<OrgRow>();
+			const db = drizzle(this.env.db);
+			const result = await db
+				.select({ org_id: organizations.org_id })
+				.from(organizations)
+				.where(eq(organizations.org_key, org_key))
+				.get();
 			if (!result) {
 				throw new NonRetryableError(`Org with key "${org_key}" not found!`);
 			}
@@ -208,10 +217,15 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			return obj.key;
 		});
 		await step.do('Save Record', async () => {
-			await this.env.db
-				.prepare('INSERT INTO alerts (alert_id, organization, body, audio_url, timestamp, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
-				.bind(event.instanceId, org_id, parsed, audio_url, Date.now(), event.payload.emailText)
-				.run();
+			const db = drizzle(this.env.db);
+			await db.insert(alerts).values({
+				alert_id: event.instanceId,
+				organization: org_id,
+				body: parsed,
+				audio_url: audio_url,
+				timestamp: Date.now(),
+				source: event.payload.emailText,
+			});
 		});
 	}
 }
