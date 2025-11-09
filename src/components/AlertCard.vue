@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
+
 interface Alert {
   alert_id: string
   organization: string
@@ -12,7 +15,8 @@ interface Props {
   alert: Alert
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
+const settingsStore = useSettingsStore()
 
 const formatTimestamp = (timestamp: number): string => {
   const date = new Date(timestamp)
@@ -24,6 +28,11 @@ const formatTimestamp = (timestamp: number): string => {
     minute: '2-digit',
   })
 }
+
+const audioUrl = computed(() => {
+  if (!props.alert.audio_url) return null
+  return `/api/org/${settingsStore.organizationKey}/alerts/${props.alert.alert_id}/audio`
+})
 </script>
 
 <template>
@@ -34,8 +43,8 @@ const formatTimestamp = (timestamp: number): string => {
     <div class="alert-body">
       {{ alert.source }}
     </div>
-    <div v-if="alert.audio_url" class="alert-audio">
-      <audio controls :src="`/audio/${alert.audio_url}`">
+    <div v-if="audioUrl" class="alert-audio">
+      <audio controls :src="audioUrl">
         Your browser does not support the audio element.
       </audio>
     </div>

@@ -110,6 +110,42 @@ app.get('/org/:organizationKey/alerts', async (c) => {
 	return c.json(alerts.results);
 });
 
+app.get('/org/:organizationKey/alerts/:alertId/audio', async (c) => {
+	const organizationKey = c.req.param('organizationKey');
+	const alertId = c.req.param('alertId');
+	const db = c.env.db;
+
+	// Get the alert and verify it belongs to the organization
+	const stmt = db
+		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ? AND alerts.alert_id = ?")
+		.bind(organizationKey, alertId);
+	const alert = await stmt.first<AlertRow>();
+
+	if (!alert) {
+		throw new HTTPException(404, { message: 'Alert not found' });
+	}
+
+	if (!alert.audio_url) {
+		throw new HTTPException(404, { message: 'Audio file not found for this alert' });
+	}
+
+	// Fetch the audio file from R2 bucket
+	const audioFile = await c.env.bucket.get(alert.audio_url);
+
+	if (!audioFile) {
+		throw new HTTPException(404, { message: 'Audio file not found in storage' });
+	}
+
+	// Return the audio file with appropriate headers
+	return new Response(audioFile.body, {
+		headers: {
+			'Content-Type': 'audio/mpeg',
+			'Content-Disposition': `inline; filename="${alertId}.mp3"`,
+			'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
+		},
+	});
+});
+
 // Workflow
 type WorkflowParams = {
 	emailTo: string;
