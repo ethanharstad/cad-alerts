@@ -29,6 +29,7 @@ const alertsLoading = ref(false)
 const alertsError = ref<string | null>(null)
 
 const countdown = ref<number>(0)
+const isPaused = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -114,6 +115,26 @@ const stopRefreshTimer = () => {
   }
 }
 
+const togglePause = () => {
+  isPaused.value = !isPaused.value
+
+  if (isPaused.value) {
+    // Pause: stop the timers
+    stopRefreshTimer()
+  } else {
+    // Unpause: restart the timers
+    startRefreshTimer()
+  }
+}
+
+const manualRefresh = async () => {
+  await fetchAlerts()
+  // If not paused, restart the timer to reset the interval
+  if (!isPaused.value) {
+    startRefreshTimer()
+  }
+}
+
 onMounted(() => {
   fetchOrganization().then(() => {
     // Start auto-refresh after initial load
@@ -157,8 +178,28 @@ onUnmounted(() => {
       <div v-if="organization" class="alerts-section">
         <div class="alerts-header">
           <h2>Alerts</h2>
-          <div v-if="countdown > 0 && !alertsLoading" class="countdown">
-            Next refresh in {{ countdown }}s
+          <div class="refresh-controls">
+            <div v-if="countdown > 0 && !alertsLoading && !isPaused" class="countdown">
+              Next refresh in {{ countdown }}s
+            </div>
+            <div v-if="isPaused" class="paused-indicator">
+              Auto-refresh paused
+            </div>
+            <button
+              @click="manualRefresh"
+              class="btn-refresh"
+              :disabled="alertsLoading"
+              title="Refresh now"
+            >
+              ↻ Refresh
+            </button>
+            <button
+              @click="togglePause"
+              class="btn-pause"
+              :title="isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+            >
+              {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
+            </button>
           </div>
         </div>
 
@@ -293,6 +334,13 @@ h1 {
   font-size: 1.5rem;
 }
 
+.refresh-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .countdown {
   font-size: 0.875rem;
   color: var(--color-text-muted, #666);
@@ -301,6 +349,50 @@ h1 {
   border-radius: 4px;
   border: 1px solid var(--color-border);
   font-weight: 500;
+}
+
+.paused-indicator {
+  font-size: 0.875rem;
+  color: #856404;
+  background: #fff3cd;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid #ffeaa7;
+  font-weight: 500;
+}
+
+.btn-refresh,
+.btn-pause {
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  color: var(--color-text);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-refresh:hover:not(:disabled),
+.btn-pause:hover {
+  background: var(--color-background-soft);
+  border-color: hsla(160, 100%, 37%, 1);
+}
+
+.btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-refresh {
+  background: hsla(160, 100%, 37%, 1);
+  color: white;
+  border-color: hsla(160, 100%, 37%, 1);
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: hsla(160, 100%, 32%, 1);
 }
 
 .alerts-list {
@@ -322,9 +414,21 @@ h1 {
     gap: 0.75rem;
   }
 
-  .countdown {
+  .refresh-controls {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .countdown,
+  .paused-indicator {
     width: 100%;
     text-align: center;
+  }
+
+  .btn-refresh,
+  .btn-pause {
+    width: 100%;
+    justify-content: center;
   }
 }
 
