@@ -49,6 +49,18 @@
           <p class="help-text">How often to check for new alerts (minimum 5 seconds, maximum 300 seconds)</p>
         </div>
 
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input
+              id="autoPlayNewAlerts"
+              v-model="settingsStore.autoPlayNewAlerts"
+              type="checkbox"
+            />
+            <span>Auto-play new alerts</span>
+          </label>
+          <p class="help-text">Automatically play audio for the newest alert when it arrives</p>
+        </div>
+
         <div class="button-group">
           <button type="submit" class="btn-primary">Save Settings</button>
           <button type="button" @click="clearSettings" class="btn-secondary">Clear Settings</button>
@@ -168,6 +180,30 @@ input:focus {
   margin-top: 0.25rem;
   font-size: 0.875rem;
   color: var(--color-text-muted, #666);
+}
+
+.checkbox-group {
+  margin-bottom: 1.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  height: 1.25rem;
+  cursor: pointer;
+  margin: 0;
+}
+
+.checkbox-label span {
+  user-select: none;
 }
 
 .button-group {
