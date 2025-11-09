@@ -72,7 +72,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			apiKey: await this.env.ai_key.get(),
 			baseURL: await this.env.ai.gateway("sar").getUrl("openai"),
 			defaultHeaders: {
-				"cf-aig-authorization": "Bearer uVJLoTF5deDPGWmDFuqgOVcxaroehwyBCxVE3ynY",
+				"cf-aig-authorization": `Bearer ${this.env.AI_GATEWAY_TOKEN}`,
 			}
 		});
 		const org_id = await step.do('Get Org', async () => {
