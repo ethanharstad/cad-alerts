@@ -27,6 +27,7 @@ const error = ref<string | null>(null)
 const alerts = ref<Alert[]>([])
 const alertsLoading = ref(false)
 const alertsError = ref<string | null>(null)
+const previousAlertIds = ref<Set<string>>(new Set())
 
 const countdown = ref<number>(0)
 const isPaused = ref(false)
@@ -69,7 +70,22 @@ const fetchAlerts = async () => {
       throw new Error('Failed to fetch alerts')
     }
 
-    alerts.value = await response.json()
+    const newAlerts: Alert[] = await response.json()
+
+    // Check for new alerts and auto-play if enabled
+    if (settingsStore.autoPlayNewAlerts && previousAlertIds.value.size > 0 && newAlerts.length > 0) {
+      // Find alerts that weren't in the previous list
+      const newestAlert = newAlerts.find(alert => !previousAlertIds.value.has(alert.alert_id))
+
+      if (newestAlert && newestAlert.audio_url) {
+        // Play the newest alert
+        playAlert(newestAlert)
+      }
+    }
+
+    // Update alerts and track IDs
+    alerts.value = newAlerts
+    previousAlertIds.value = new Set(newAlerts.map(alert => alert.alert_id))
 
     // Reset countdown after successful fetch
     resetCountdown()
@@ -78,6 +94,14 @@ const fetchAlerts = async () => {
   } finally {
     alertsLoading.value = false
   }
+}
+
+const playAlert = (alert: Alert) => {
+  const audioUrl = `/api/org/${settingsStore.organizationKey}/alerts/${alert.alert_id}/audio`
+  const audio = new Audio(audioUrl)
+  audio.play().catch(err => {
+    console.error('Failed to auto-play alert:', err)
+  })
 }
 
 const resetCountdown = () => {
