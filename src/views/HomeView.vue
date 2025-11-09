@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 
@@ -27,6 +27,10 @@ const error = ref<string | null>(null)
 const alerts = ref<Alert[]>([])
 const alertsLoading = ref(false)
 const alertsError = ref<string | null>(null)
+
+const countdown = ref<number>(0)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const fetchOrganization = async () => {
   loading.value = true
@@ -65,6 +69,9 @@ const fetchAlerts = async () => {
     }
 
     alerts.value = await response.json()
+
+    // Reset countdown after successful fetch
+    resetCountdown()
   } catch (err) {
     alertsError.value = err instanceof Error ? err.message : 'An error occurred'
   } finally {
@@ -72,8 +79,52 @@ const fetchAlerts = async () => {
   }
 }
 
+const resetCountdown = () => {
+  countdown.value = settingsStore.refreshInterval
+}
+
+const startRefreshTimer = () => {
+  // Clear any existing timers
+  stopRefreshTimer()
+
+  // Set initial countdown
+  resetCountdown()
+
+  // Start countdown timer (updates every second)
+  countdownTimer = setInterval(() => {
+    if (countdown.value > 0) {
+      countdown.value--
+    }
+  }, 1000)
+
+  // Start refresh timer
+  refreshTimer = setInterval(() => {
+    fetchAlerts()
+  }, settingsStore.refreshInterval * 1000)
+}
+
+const stopRefreshTimer = () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+}
+
 onMounted(() => {
-  fetchOrganization()
+  fetchOrganization().then(() => {
+    // Start auto-refresh after initial load
+    if (organization.value) {
+      startRefreshTimer()
+    }
+  })
+})
+
+onUnmounted(() => {
+  stopRefreshTimer()
 })
 </script>
 
@@ -104,7 +155,12 @@ onMounted(() => {
       </div>
 
       <div v-if="organization" class="alerts-section">
-        <h2>Alerts</h2>
+        <div class="alerts-header">
+          <h2>Alerts</h2>
+          <div v-if="countdown > 0 && !alertsLoading" class="countdown">
+            Next refresh in {{ countdown }}s
+          </div>
+        </div>
 
         <div v-if="alertsLoading" class="status-message loading">
           <p>Loading alerts...</p>
@@ -224,10 +280,27 @@ h1 {
   margin-top: 2rem;
 }
 
-.alerts-section h2 {
+.alerts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 1.5rem;
+}
+
+.alerts-header h2 {
+  margin: 0;
   color: var(--color-heading);
   font-size: 1.5rem;
+}
+
+.countdown {
+  font-size: 0.875rem;
+  color: var(--color-text-muted, #666);
+  background: var(--color-background-soft);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  font-weight: 500;
 }
 
 .alerts-list {
@@ -240,6 +313,19 @@ h1 {
   background: #e7f3ff;
   color: #004085;
   border: 1px solid #b3d9ff;
+}
+
+@media (max-width: 640px) {
+  .alerts-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .countdown {
+    width: 100%;
+    text-align: center;
+  }
 }
 
 @media (min-width: 1024px) {

@@ -35,6 +35,20 @@
           <p class="help-text">The access key for your organization</p>
         </div>
 
+        <div class="form-group">
+          <label for="refreshInterval">Refresh Interval (seconds)</label>
+          <input
+            id="refreshInterval"
+            v-model.number="settingsStore.refreshInterval"
+            type="number"
+            min="5"
+            max="300"
+            placeholder="Enter refresh interval"
+            required
+          />
+          <p class="help-text">How often to check for new alerts (minimum 5 seconds, maximum 300 seconds)</p>
+        </div>
+
         <div class="button-group">
           <button type="submit" class="btn-primary">Save Settings</button>
           <button type="button" @click="clearSettings" class="btn-secondary">Clear Settings</button>
@@ -57,14 +71,18 @@ const message = ref<string>('')
 const messageType = ref<'success' | 'error'>('success')
 
 const saveSettings = () => {
-  if (settingsStore.organizationKey && settingsStore.organizationSecret) {
+  if (settingsStore.organizationKey && settingsStore.organizationSecret && settingsStore.refreshInterval >= 5 && settingsStore.refreshInterval <= 300) {
     message.value = 'Settings saved successfully!'
     messageType.value = 'success'
     setTimeout(() => {
       message.value = ''
     }, 3000)
   } else {
-    message.value = 'Please fill in all fields'
+    if (!settingsStore.organizationKey || !settingsStore.organizationSecret) {
+      message.value = 'Please fill in all required fields'
+    } else {
+      message.value = 'Refresh interval must be between 5 and 300 seconds'
+    }
     messageType.value = 'error'
   }
 }
