@@ -3,11 +3,12 @@ import { RouterLink, RouterView } from 'vue-router'
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
-
-    <div class="wrapper">
-      <h1 class="green">CAD Pre-Alerts</h1>
+  <header class="navbar">
+    <div class="navbar-container">
+      <div class="navbar-brand">
+        <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="40" height="40" />
+        <h1>CAD Pre-Alerts</h1>
+      </div>
       <nav>
         <RouterLink to="/">Home</RouterLink>
         <RouterLink to="/about">About</RouterLink>
@@ -20,75 +21,89 @@ import { RouterLink, RouterView } from 'vue-router'
 </template>
 
 <style scoped>
-header {
-  line-height: 1.5;
-  max-height: 100vh;
+.navbar {
+  background: var(--color-background-soft);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.navbar-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  gap: 2rem;
+}
+
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .logo {
   display: block;
-  margin: 0 auto 2rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--color-heading);
+  white-space: nowrap;
 }
 
 nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
-}
-
-button {
-  background-color: hsla(160, 100%, 37%, 1);
-  color: var(--color-background);
-  border: 0;
   padding: 0.5rem 1rem;
-  border-radius: 0.25rem;
-  cursor: pointer;
-  margin: 1rem 0 0.5rem 0;
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--color-text);
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+  white-space: nowrap;
 }
 
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
+nav a:hover {
+  background-color: var(--color-background-mute);
+}
+
+nav a.router-link-exact-active {
+  background-color: hsla(160, 100%, 37%, 0.1);
+  color: hsla(160, 100%, 37%, 1);
+}
+
+nav a.router-link-exact-active:hover {
+  background-color: hsla(160, 100%, 37%, 0.15);
+}
+
+@media (max-width: 768px) {
+  .navbar-container {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 1rem;
   }
 
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
+  h1 {
+    font-size: 1.25rem;
   }
 
   nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
 
-    padding: 1rem 0;
-    margin-top: 1rem;
+  nav a {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
   }
 }
 </style>
