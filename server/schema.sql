@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     access_key TEXT,
     name TEXT
 );
+CREATE INDEX idx_organization_key on organizations(org_key);
 
 DROP TABLE IF EXISTS alerts;
 CREATE TABLE IF NOT EXISTS alerts (
@@ -16,3 +17,4 @@ CREATE TABLE IF NOT EXISTS alerts (
     source TEXT,
     FOREIGN KEY(organization) REFERENCES organizations(org_id)
 );
+CREATE INDEX idx_latest_alerts_for_org ON alerts(organization, timestamp DESC);

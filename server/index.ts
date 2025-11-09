@@ -101,7 +101,7 @@ app.get('/org/:organizationKey/alerts', async (c) => {
 	const organizationKey = await c.req.param('organizationKey');
 	const db = c.env.db;
 	const stmt = db
-		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ? ORDER BY timestamp DESC;")
+		.prepare("SELECT alerts.* FROM organizations INNER JOIN alerts ON alerts.organization=organizations.org_id WHERE organizations.org_key = ? ORDER BY timestamp DESC LIMIT 5;")
 		.bind(organizationKey);
 	const alerts = await stmt.all<AlertRow>();
 	if (!alerts) {
