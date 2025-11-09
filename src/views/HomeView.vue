@@ -241,7 +241,7 @@ onUnmounted(() => {
 }
 
 .home-container {
-  max-width: 800px;
+  /* max-width: 800px; */
   margin: 0 auto;
 }
 
@@ -429,7 +429,7 @@ h1 {
   }
 
   .home-container {
-    max-width: 1000px;
+    /* max-width: 1000px; */
   }
 }
 </style>

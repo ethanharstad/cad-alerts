@@ -30,7 +30,7 @@ import { RouterLink, RouterView } from 'vue-router'
 }
 
 .navbar-container {
-  max-width: 1400px;
+  /* max-width: 1400px; */
   margin: 0 auto;
   display: flex;
   justify-content: space-between;
