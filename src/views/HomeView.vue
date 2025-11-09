@@ -161,23 +161,9 @@ onUnmounted(() => {
         <button @click="fetchOrganization" class="btn-retry">Retry</button>
       </div>
 
-      <div v-else-if="organization" class="organization-info">
-        <h2>{{ organization.name }}</h2>
-        <div class="organization-details">
-          <div class="detail-item">
-            <span class="label">Organization ID:</span>
-            <span class="value">{{ organization.org_id }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="label">Organization Key:</span>
-            <span class="value">{{ organization.org_key }}</span>
-          </div>
-        </div>
-      </div>
-
       <div v-if="organization" class="alerts-section">
         <div class="alerts-header">
-          <h2>Alerts</h2>
+          <h2>{{ organization.name }} - Alerts</h2>
           <div class="refresh-controls">
             <div v-if="countdown > 0 && !alertsLoading && !isPaused" class="countdown">
               Next refresh in {{ countdown }}s
@@ -274,25 +260,6 @@ h1 {
 
 .btn-retry:hover {
   background: hsla(160, 100%, 32%, 1);
-}
-
-.organization-info {
-  background: var(--color-background-soft);
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.organization-info h2 {
-  margin: 0 0 1.5rem 0;
-  color: var(--color-heading);
-  font-size: 2rem;
-}
-
-.organization-details {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
 }
 
 .detail-item {

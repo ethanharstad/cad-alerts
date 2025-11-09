@@ -32,7 +32,7 @@ const formatTimestamp = (timestamp: number): string => {
       <span class="alert-timestamp">{{ formatTimestamp(alert.timestamp) }}</span>
     </div>
     <div class="alert-body">
-      {{ alert.body }}
+      {{ alert.source }}
     </div>
     <div v-if="alert.audio_url" class="alert-audio">
       <audio controls :src="`/audio/${alert.audio_url}`">
