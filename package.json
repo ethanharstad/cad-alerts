@@ -16,6 +16,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
+		"drizzle-orm": "^0.44.7",
 		"hono": "^4.9.12",
 		"openai": "^6.7.0",
 		"pinia": "^3.0.4",
