@@ -35,8 +35,7 @@
 		{
 			"name": "alert-workflow",
 			"binding": "alert_workflow",
-			"class_name": "AlertWorkflow",
-			"script_name": "workflow"
+			"class_name": "AlertWorkflow"
 		}
 	],
 	"ai": {
