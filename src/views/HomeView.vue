@@ -17,6 +17,9 @@ interface Alert {
   audio_url: string
   timestamp: number
   source: string
+  nature: string
+  address: string
+  city: string
 }
 
 const settingsStore = useSettingsStore()

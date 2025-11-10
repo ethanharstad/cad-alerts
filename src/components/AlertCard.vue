@@ -9,6 +9,9 @@ interface Alert {
   audio_url: string
   timestamp: number
   source: string
+  nature: string
+  address: string
+  city: string
 }
 
 interface Props {
@@ -41,7 +44,9 @@ const audioUrl = computed(() => {
       <span class="alert-timestamp">{{ formatTimestamp(alert.timestamp) }}</span>
     </div>
     <div class="alert-body">
-      {{ alert.source }}
+      <p>{{ alert.nature }}</p>
+      <p>{{ alert.address }}</p>
+      <p>{{  alert.city }}</p>
     </div>
     <div v-if="audioUrl" class="alert-audio">
       <audio controls :src="audioUrl">
