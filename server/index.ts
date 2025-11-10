@@ -5,7 +5,6 @@ import OpenAI from "openai";
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { zodTextFormat } from 'openai/helpers/zod';
 
 import { app } from './api';
 import { organizations, alerts, type Organization, type Alert } from './schema';
@@ -15,11 +14,13 @@ Parse provided json into a message that will be utilized in a text to speech ann
 The format of the message should be the nature of the call, followed by the address repeated twice, followed by the city.
 Common textual abbreviations should be expanded into their full spelling.
 
+Do not precede the nature of the call with any text.
+
 The address can take the form of a numbered street address, a numbered hundred block, or a street intersection.
 There may be clarifying information such as an apartment number or a business name.
 Numbers longer 3 digits or longer should be paired. Examples: 320 = three twenty, 1234 = twelve thirty-four, 2003 = twenty oh three.
 
-Precede the city with "in" to make the message sound more natural.
+Precede the city with "in" to make the message sound more natural. Only mention the city once.
 `
 
 const TTS_INSTRUCTIONS = `
@@ -66,7 +67,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			const segments = event.payload.emailText.split('|');
 			const nature = segments[0];
 			const [address, city] = segments[1].split(':');
-			const [latitude, longitude] = segments[2].split(',');
+			const [latitude, longitude] = segments[segments.length - 1].split(',');
 			return PreAlert.parse({
 				nature: nature.trim(),
 				address: address.trim(),
