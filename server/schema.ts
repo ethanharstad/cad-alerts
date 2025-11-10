@@ -18,8 +18,8 @@ export const alerts = sqliteTable('alerts', {
 	timestamp: integer('timestamp').notNull(),
 	source: text('source').notNull(),
 	address: text('address').notNull(),
-	city: text('text').notNull(),
-	nature: text('text').notNull(),
+	city: text('city').notNull(),
+	nature: text('nature').notNull(),
 }, (table) => ({
 	latestAlertsIdx: index('idx_latest_alerts_for_org').on(table.organization, desc(table.timestamp)),
 }))

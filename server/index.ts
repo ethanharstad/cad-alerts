@@ -114,7 +114,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
             });
             return response.output_parsed;
         });
-		const ttsText = await step.do('Parse Email', async () => {
+		const ttsText = await step.do('Generate Text', async () => {
 			console.log({
 				from: event.payload.emailFrom,
 				to: event.payload.emailTo,
