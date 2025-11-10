@@ -16,10 +16,16 @@ Common textual abbreviations should be expanded into their full spelling.
 
 Do not precede the nature of the call with any text.
 
+## Nature Examples
+- FIRE-RESIDENCE = Fire - Residence
+- FIRE-VEHICLE = Fire - Vehicle
+- BREATHING PROBS = Breathing Problems
+
 The address can take the form of a numbered street address, a numbered hundred block, or a street intersection.
 There may be clarifying information such as an apartment number or a business name.
 Numbered address longer 3 digits or longer should be paired. Examples: 320 = three twenty, 1234 = twelve thirty-four, 2003 = twenty oh three.
 Numbered streets should be spelled out. Examples: 230th St = two thirtieth street, 16th St = sixteenth street.
+Ensure that the address is repeated twice.
 
 Precede the city with "in" to make the message sound more natural. Only mention the city once.
 
