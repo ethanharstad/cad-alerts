@@ -3,8 +3,15 @@ import { NonRetryableError } from 'cloudflare:workflows';
 import OpenAI from "openai";
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
+import { z } from  'zod';
+import { zodTextFormat } from 'openai/helpers/zod';
 
 import { organizations, alerts, type Organization, type Alert } from './schema';
+
+const EXTRACT_PROMPT_INSTRUCTION = `
+Extract the address, city, and nature of emergency from the provided prealert message.
+Expand common address abbreviations to their full spelling to support use in text to speech applications.
+`;
 
 const PREALERT_PROMPT_INSTRUCTIONS = `
 # Role and Objective
@@ -60,7 +67,12 @@ const TTS_INSTRUCTIONS = `
 Speak in a clear tone appropriate for dispatching emergency units over the radio. Pronounce numbers as pairs.
 `
 
-// Workflow
+const PreAlert = z.object({
+    nature: z.string(),
+    address: z.string(),
+    city: z.string(),
+});
+
 type WorkflowParams = {
 	emailTo: string;
 	emailFrom: string;
@@ -89,7 +101,18 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			}
 			return result.org_id;
 		});
-		const parsed = await step.do('Parse Email', async () => {
+        const parsedEvent = await step.do('Parse Email', async () => {
+            const response = await openai.responses.parse({
+                model: "gpt-4.1-nano",
+                instructions: EXTRACT_PROMPT_INSTRUCTION,
+                input: event.payload.emailText,
+                text: {
+                    format: zodTextFormat(PreAlert, "prealert"),
+                }
+            });
+            return response.output_parsed;
+        });
+		const ttsText = await step.do('Parse Email', async () => {
 			console.log({
 				from: event.payload.emailFrom,
 				to: event.payload.emailTo,
@@ -107,7 +130,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				model: "gpt-4o-mini-tts",
 				voice: "nova",
 				instructions: TTS_INSTRUCTIONS,
-				input: parsed,
+				input: ttsText,
 			});
 			return await mp3.arrayBuffer();
 		});
@@ -128,7 +151,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			await db.insert(alerts).values({
 				alert_id: event.instanceId,
 				organization: org_id,
-				body: parsed,
+				body: ttsText,
 				audio_url: audio_url,
 				timestamp: Date.now(),
 				source: event.payload.emailText,

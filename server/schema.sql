@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     audio_url TEXT,
     timestamp INTEGER,
     source TEXT,
+    address TEXT,
+    city TEXT,
+    nature TEXT,
     FOREIGN KEY(organization) REFERENCES organizations(org_id)
 );
 CREATE INDEX idx_latest_alerts_for_org ON alerts(organization, timestamp DESC);
