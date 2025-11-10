@@ -78,7 +78,7 @@ type WorkflowParams = {
 	emailFrom: string;
 	emailText: string;
 };
-export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
+export default class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep) {
 		const openai = new OpenAI({
 			apiKey: await this.env.ai_key.get(),
