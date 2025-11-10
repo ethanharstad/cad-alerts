@@ -155,6 +155,9 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				audio_url: audio_url,
 				timestamp: Date.now(),
 				source: event.payload.emailText,
+                address: parsedEvent?.address || '',
+                city: parsedEvent?.city || '',
+                nature: parsedEvent?.nature || '',
 			});
 		});
 	}
