@@ -71,8 +71,8 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				nature: nature.trim(),
 				address: address.trim(),
 				city: city.trim(),
-				latitude: latitude.trim(),
-				longitude: longitude.trim(),
+				latitude: Number(latitude.trim()),
+				longitude: Number(longitude.trim()),
 			});
 		});
 		const ttsText = await step.do('Generate Text', async () => {
@@ -125,6 +125,8 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				address: parsedEvent?.address || '',
 				city: parsedEvent?.city || '',
 				nature: parsedEvent?.nature || '',
+				latitude: parsedEvent.latitude,
+				longitude: parsedEvent.longitude,
 			});
 		});
 	}

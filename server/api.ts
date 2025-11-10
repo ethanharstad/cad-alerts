@@ -33,6 +33,8 @@ app.get('/org/:organizationKey/alerts', async (c) => {
 			nature: alerts.nature,
 			address: alerts.address,
 			city: alerts.city,
+			latitude: alerts.latitude,
+			longitude: alerts.longitude,
 		})
 		.from(alerts)
 		.innerJoin(organizations, eq(alerts.organization, organizations.org_id))

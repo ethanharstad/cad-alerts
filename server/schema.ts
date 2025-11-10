@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, index, real } from 'drizzle-orm/sqlite-core'
 import { desc } from 'drizzle-orm';
 
 export const organizations = sqliteTable('organizations', {
@@ -20,6 +20,8 @@ export const alerts = sqliteTable('alerts', {
 	address: text('address').notNull(),
 	city: text('city').notNull(),
 	nature: text('nature').notNull(),
+	latitude: real('latitude'),
+	longitude: real('longitude'),
 }, (table) => ({
 	latestAlertsIdx: index('idx_latest_alerts_for_org').on(table.organization, desc(table.timestamp)),
 }))

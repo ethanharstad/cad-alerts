@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     address TEXT,
     city TEXT,
     nature TEXT,
+    latitude REAL,
+    longitude REAL,
     FOREIGN KEY(organization) REFERENCES organizations(org_id)
 );
 CREATE INDEX idx_latest_alerts_for_org ON alerts(organization, timestamp DESC);
