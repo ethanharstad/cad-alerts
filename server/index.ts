@@ -22,6 +22,13 @@ Numbered address longer 3 digits or longer should be paired. Examples: 320 = thr
 Numbered streets should be spelled out. Examples: 230th St = two thirtieth street, 16th St = sixteenth street.
 
 Precede the city with "in" to make the message sound more natural. Only mention the city once.
+
+## Address Examples
+- 1900BLK 230TH ST = nineteen hundred block of two hundred thirtieth street
+- 16TH ST & LINN ST = intersection of sixteenth street and linn street
+- 1202 8TH ST = twelve oh-two eighth street
+
+Ensure that the address matches the address that was provided.
 `
 
 const TTS_INSTRUCTIONS = `
