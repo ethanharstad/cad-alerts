@@ -4,65 +4,22 @@ import { NonRetryableError } from 'cloudflare:workflows';
 import OpenAI from "openai";
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
-import { z } from  'zod';
+import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 
 import { app } from './api';
 import { organizations, alerts, type Organization, type Alert } from './schema';
 
-const EXTRACT_PROMPT_INSTRUCTION = `
-Extract the address, city, and nature of emergency from the provided prealert message.
-Expand common address abbreviations to their full spelling to support use in text to speech applications.
-`;
-
 const PREALERT_PROMPT_INSTRUCTIONS = `
-# Role and Objective
-Parse provided dispatch messages into clear, pre-alert messages for emergency responders. Each pre-alert message should concisely describe the nature and location of the emergency, suitable for text-to-speech delivery.
+Parse provided json into a message that will be utilized in a text to speech announcement for emergency responders.
+The format of the message should be the nature of the call, followed by the address repeated twice, followed by the city.
+Common textual abbreviations should be expanded into their full spelling.
 
-# Instructions
-- Extract and expand abbreviations where confident, particularly for addresses and numerics like 1st 2nd.
-- Do not repeat the same word twice in a row.
-- Each message must include:
-  - The type of emergency (call type).
-  - The full address of the emergency.
-- Only include additional information if relevant to responders.
-- Repeat the nature of the emergency and the address twice:
-  1. **First repetition**: Separate any numbers into individual digits.
-  2. **Second repetition**: Group numbers into pairs of digits. If there is an odd number of digits, then lead with a single digit and pair the remaining digits.
+The address can take the form of a numbered street address, a numbered hundred block, or a street intersection.
+There may be clarifying information such as an apartment number or a business name.
+Numbers longer 3 digits or longer should be paired. Examples: 320 = three twenty, 1234 = twelve thirty-four, 2003 = twenty oh three.
 
-After generating the pre-alert message, review it for clarity and adherence to the required structure. If either repetition is missing or unclear, revise before finalizing output.
-
-# Examples
-<user_prompt>
-HEADACHE | 1116 1ST ST:BOONE | 42.067439,-93.873498
-</user_prompt>
-<assistant_response>
-Medical. Headache. 1 1 1 6 First Street, Boone. 11 16 First Street, Boone.
-</assistant_response>
-
-<user_prompt>
-FIRE-RESIDENCE | 2004 BENTON ST:BOONE | 42.076317,-93.874821
-</user_prompt>
-<assistant_response>
-Fire. Residential Fire. 2 0 0 4 Benton Street, Boone. Residential Fire. 20 04 Benton Street, Boone.
-</assistant_response>
-
-<user_prompt>
-BREATHING PROBS | 128 HANCOCK DR #APT 3; HANCOCK APARTMENTS:BOONE | 42.044940,-93.875624
-</user_prompt>
-<assistant_response>
-Medical. Breathing Problems. 1 2 8 Hancock Drive, Apartment 3, Boone. Hancock Apartments. Breathing Problems. 1 28 Hancock Drive, Apartment 3, Boone. Hancock Apartments.
-</assistant_response>
-
-# Output Format
-- Use clear, complete sentences suitable for text-to-speech.
-- Maintain the provided structure
-
-# Verbosity
-- Be concise and clear, avoiding unnecessary repetition or irrelevant detail.
-
-# Stop Conditions
-- Return when the pre-alert message includes both required repetitions (single and paired digits) for the type and address, plus only relevant details.
+Precede the city with "in" to make the message sound more natural.
 `
 
 const TTS_INSTRUCTIONS = `
@@ -70,9 +27,11 @@ Speak in a clear tone appropriate for dispatching emergency units over the radio
 `
 
 const PreAlert = z.object({
-    nature: z.string(),
-    address: z.string(),
-    city: z.string(),
+	nature: z.string(),
+	address: z.string(),
+	city: z.string(),
+	longitude: z.number(),
+	latitude: z.number(),
 });
 
 type WorkflowParams = {
@@ -103,17 +62,19 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			}
 			return result.org_id;
 		});
-        const parsedEvent = await step.do('Parse Email', async () => {
-            const response = await openai.responses.parse({
-                model: "gpt-4.1-nano",
-                instructions: EXTRACT_PROMPT_INSTRUCTION,
-                input: event.payload.emailText,
-                text: {
-                    format: zodTextFormat(PreAlert, "prealert"),
-                }
-            });
-            return response.output_parsed;
-        });
+		const parsedEvent = await step.do('Parse Email', async () => {
+			const segments = event.payload.emailText.split('|');
+			const nature = segments[0];
+			const [address, city] = segments[1].split(':');
+			const [latitude, longitude] = segments[2].split(',');
+			return PreAlert.parse({
+				nature: nature.trim(),
+				address: address.trim(),
+				city: city.trim(),
+				latitude: latitude.trim(),
+				longitude: longitude.trim(),
+			});
+		});
 		const ttsText = await step.do('Generate Text', async () => {
 			console.log({
 				from: event.payload.emailFrom,
@@ -123,7 +84,11 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			const response = await openai.responses.create({
 				model: "gpt-4.1-nano",
 				instructions: PREALERT_PROMPT_INSTRUCTIONS,
-				input: event.payload.emailText,
+				input: JSON.stringify({
+					nature: parsedEvent.nature,
+					address: parsedEvent.address,
+					city: parsedEvent.city,
+				}),
 			});
 			return response.output_text;
 		});
@@ -157,9 +122,9 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				audio_url: audio_url,
 				timestamp: Date.now(),
 				source: event.payload.emailText,
-                address: parsedEvent?.address || '',
-                city: parsedEvent?.city || '',
-                nature: parsedEvent?.nature || '',
+				address: parsedEvent?.address || '',
+				city: parsedEvent?.city || '',
+				nature: parsedEvent?.nature || '',
 			});
 		});
 	}
