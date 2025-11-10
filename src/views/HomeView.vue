@@ -25,7 +25,6 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 
 const alerts = ref<Alert[]>([])
-const alertsLoading = ref(false)
 const alertsError = ref<string | null>(null)
 const previousAlertIds = ref<Set<string>>(new Set())
 
@@ -60,7 +59,6 @@ const fetchOrganization = async () => {
 }
 
 const fetchAlerts = async () => {
-  alertsLoading.value = true
   alertsError.value = null
 
   try {
@@ -91,8 +89,6 @@ const fetchAlerts = async () => {
     resetCountdown()
   } catch (err) {
     alertsError.value = err instanceof Error ? err.message : 'An error occurred'
-  } finally {
-    alertsLoading.value = false
   }
 }
 
@@ -189,7 +185,7 @@ onUnmounted(() => {
         <div class="alerts-header">
           <h2>{{ organization.name }} - Alerts</h2>
           <div class="refresh-controls">
-            <div v-if="countdown > 0 && !alertsLoading && !isPaused" class="countdown">
+            <div v-if="countdown > 0 && !isPaused" class="countdown">
               Next refresh in {{ countdown }}s
             </div>
             <div v-if="isPaused" class="paused-indicator">
@@ -198,7 +194,6 @@ onUnmounted(() => {
             <button
               @click="manualRefresh"
               class="btn-refresh"
-              :disabled="alertsLoading"
               title="Refresh now"
             >
               ↻ Refresh
@@ -213,11 +208,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div v-if="alertsLoading" class="status-message loading">
-          <p>Loading alerts...</p>
-        </div>
-
-        <div v-else-if="alertsError" class="status-message error">
+        <div v-if="alertsError" class="status-message error">
           <p><strong>Error:</strong> {{ alertsError }}</p>
           <button @click="fetchAlerts" class="btn-retry">Retry</button>
         </div>
