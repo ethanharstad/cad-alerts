@@ -28,3 +28,12 @@ export const alerts = sqliteTable('alerts', {
 
 export type Organization = typeof organizations.$inferSelect
 export type Alert = typeof alerts.$inferSelect
+
+// Compile-time guard: the Drizzle row types must remain assignable to the
+// shared API contract in shared/types.ts. If the schema drifts (a renamed or
+// retyped column), these aliases fail the `extends` constraint and break the
+// type-check, forcing shared/types.ts to be updated in lockstep.
+import type { Organization as OrganizationContract, Alert as AlertContract } from '../shared/types'
+type AssertAssignable<_A extends _B, _B> = true
+type _OrgContractGuard = AssertAssignable<Organization, OrganizationContract>
+type _AlertContractGuard = AssertAssignable<Alert, AlertContract>

@@ -1,18 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-
-interface Alert {
-  alert_id: string
-  organization: string
-  body: string
-  audio_url: string
-  timestamp: number
-  source: string
-  nature: string
-  address: string
-  city: string
-}
+import { alertAudioUrl } from '@/api/client'
+import type { Alert } from '../../shared/types'
 
 interface Props {
   alert: Alert
@@ -34,7 +24,7 @@ const formatTimestamp = (timestamp: number): string => {
 
 const audioUrl = computed(() => {
   if (!props.alert.audio_url) return null
-  return `/api/org/${settingsStore.organizationKey}/alerts/${props.alert.alert_id}/audio`
+  return alertAudioUrl(settingsStore.organizationKey, props.alert.alert_id)
 })
 </script>
 
