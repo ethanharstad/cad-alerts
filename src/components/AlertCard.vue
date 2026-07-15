@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-import { alertAudioUrl } from '@/api/client'
+import { fetchAlertAudio } from '@/api/client'
 import type { Alert } from '../../shared/types'
 
 interface Props {
@@ -22,9 +22,28 @@ const formatTimestamp = (timestamp: number): string => {
   })
 }
 
-const audioUrl = computed(() => {
-  if (!props.alert.audio_url) return null
-  return alertAudioUrl(settingsStore.organizationKey, props.alert.alert_id)
+// The audio endpoint is authenticated, so we fetch the bytes (with the Bearer
+// header) and expose them as an object URL rather than pointing <audio> at the
+// endpoint directly.
+const audioUrl = ref<string | null>(null)
+
+onMounted(async () => {
+  if (!props.alert.audio_url) return
+  try {
+    audioUrl.value = await fetchAlertAudio(
+      settingsStore.organizationKey,
+      props.alert.alert_id,
+      settingsStore.organizationSecret,
+    )
+  } catch (err) {
+    console.error('Failed to load alert audio:', err)
+  }
+})
+
+onUnmounted(() => {
+  if (audioUrl.value) {
+    URL.revokeObjectURL(audioUrl.value)
+  }
 })
 </script>
 

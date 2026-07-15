@@ -2,11 +2,11 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
-import { getOrganization, getAlerts, alertAudioUrl, ApiError } from '@/api/client'
-import type { Alert, Organization } from '../../shared/types'
+import { getOrganization, getAlerts, fetchAlertAudio, ApiError } from '@/api/client'
+import type { Alert, PublicOrganization } from '../../shared/types'
 
 const settingsStore = useSettingsStore()
-const organization = ref<Organization | null>(null)
+const organization = ref<PublicOrganization | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
@@ -24,13 +24,22 @@ const fetchOrganization = async () => {
   error.value = null
 
   try {
-    organization.value = await getOrganization(settingsStore.organizationKey)
+    organization.value = await getOrganization(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+    )
 
     // Fetch alerts after successfully fetching organization
     await fetchAlerts()
   } catch (err) {
     if (err instanceof ApiError) {
-      error.value = err.status === 404 ? 'Organization not found' : 'Failed to fetch organization'
+      if (err.status === 404) {
+        error.value = 'Organization not found'
+      } else if (err.status === 401) {
+        error.value = 'Authentication failed — check your Organization Secret'
+      } else {
+        error.value = 'Failed to fetch organization'
+      }
     } else {
       error.value = err instanceof Error ? err.message : 'An error occurred'
     }
@@ -43,7 +52,10 @@ const fetchAlerts = async () => {
   alertsError.value = null
 
   try {
-    const newAlerts: Alert[] = await getAlerts(settingsStore.organizationKey)
+    const newAlerts: Alert[] = await getAlerts(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+    )
 
     // Check for new alerts and auto-play if enabled
     if (settingsStore.autoPlayNewAlerts && previousAlertIds.value.size > 0 && newAlerts.length > 0) {
@@ -64,19 +76,33 @@ const fetchAlerts = async () => {
     resetCountdown()
   } catch (err) {
     if (err instanceof ApiError) {
-      alertsError.value = 'Failed to fetch alerts'
+      alertsError.value =
+        err.status === 401
+          ? 'Authentication failed — check your Organization Secret'
+          : 'Failed to fetch alerts'
     } else {
       alertsError.value = err instanceof Error ? err.message : 'An error occurred'
     }
   }
 }
 
-const playAlert = (alert: Alert) => {
-  const audioUrl = alertAudioUrl(settingsStore.organizationKey, alert.alert_id)
-  const audio = new Audio(audioUrl)
-  audio.play().catch(err => {
-    console.error('Failed to auto-play alert:', err)
-  })
+const playAlert = async (alert: Alert) => {
+  try {
+    const audioUrl = await fetchAlertAudio(
+      settingsStore.organizationKey,
+      alert.alert_id,
+      settingsStore.organizationSecret,
+    )
+    const audio = new Audio(audioUrl)
+    // Release the object URL once playback finishes (or fails to start).
+    audio.addEventListener('ended', () => URL.revokeObjectURL(audioUrl))
+    await audio.play().catch(err => {
+      URL.revokeObjectURL(audioUrl)
+      console.error('Failed to auto-play alert:', err)
+    })
+  } catch (err) {
+    console.error('Failed to load alert audio:', err)
+  }
 }
 
 const resetCountdown = () => {

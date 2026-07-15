@@ -16,6 +16,13 @@ export interface Organization {
 	name: string
 }
 
+/**
+ * The organization shape safe to return to clients. Omits `access_key`, which
+ * is a shared secret used only for authentication and must never be sent back
+ * in an API response.
+ */
+export type PublicOrganization = Omit<Organization, 'access_key'>
+
 export interface Alert {
 	alert_id: string
 	organization: string
