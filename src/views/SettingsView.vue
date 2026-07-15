@@ -62,7 +62,9 @@
         </div>
 
         <div class="button-group">
-          <button type="submit" class="btn-primary">Save Settings</button>
+          <button type="submit" class="btn-primary" :disabled="saving">
+            {{ saving ? 'Verifying…' : 'Save Settings' }}
+          </button>
           <button type="button" @click="clearSettings" class="btn-secondary">Clear Settings</button>
         </div>
       </form>
@@ -77,25 +79,46 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
+import { getOrganization, ApiError } from '@/api/client'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
 const messageType = ref<'success' | 'error'>('success')
+const saving = ref<boolean>(false)
 
-const saveSettings = () => {
-  if (settingsStore.organizationKey && settingsStore.organizationSecret && settingsStore.refreshInterval >= 5 && settingsStore.refreshInterval <= 300) {
-    message.value = 'Settings saved successfully!'
+const saveSettings = async () => {
+  if (!settingsStore.organizationKey || !settingsStore.organizationSecret) {
+    message.value = 'Please fill in all required fields'
+    messageType.value = 'error'
+    return
+  }
+  if (settingsStore.refreshInterval < 5 || settingsStore.refreshInterval > 300) {
+    message.value = 'Refresh interval must be between 5 and 300 seconds'
+    messageType.value = 'error'
+    return
+  }
+
+  // Verify the credentials against the server before treating them as saved.
+  saving.value = true
+  message.value = ''
+  try {
+    await getOrganization(settingsStore.organizationKey, settingsStore.organizationSecret)
+    message.value = 'Settings verified and saved successfully!'
     messageType.value = 'success'
     setTimeout(() => {
       message.value = ''
     }, 3000)
-  } else {
-    if (!settingsStore.organizationKey || !settingsStore.organizationSecret) {
-      message.value = 'Please fill in all required fields'
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      message.value = 'Invalid Organization Secret for this key'
+    } else if (err instanceof ApiError && err.status === 404) {
+      message.value = 'Organization not found for this key'
     } else {
-      message.value = 'Refresh interval must be between 5 and 300 seconds'
+      message.value = 'Could not verify settings — please try again'
     }
     messageType.value = 'error'
+  } finally {
+    saving.value = false
   }
 }
 
@@ -229,6 +252,11 @@ button {
 
 .btn-primary:hover {
   background: hsla(160, 100%, 32%, 1);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .btn-secondary {
