@@ -28,7 +28,8 @@
 		{
 			"binding": "db",
 			"database_name": "cad-alerts",
-			"database_id": "c7e94055-0aba-4602-879f-5c26fc04a1e3"
+			"database_id": "c7e94055-0aba-4602-879f-5c26fc04a1e3",
+			"migrations_dir": "migrations"
 		}
 	],
 	"workflows": [
