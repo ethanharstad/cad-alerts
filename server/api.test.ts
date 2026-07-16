@@ -1,44 +1,29 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
-const orgRow = { org_id: 'o1', org_key: 'boone', access_key: 'abcdef', name: 'Boone FD' }
+import { createApp } from './api'
+import { createInMemoryStore } from './store.fake'
+import type { Organization } from '../shared/types'
 
-// Controls what the mocked org lookup returns for a given test.
-let orgResult: typeof orgRow | undefined
+const orgRow: Organization = { org_id: 'o1', org_key: 'boone', access_key: 'abcdef', name: 'Boone FD' }
 
-// Mock the Drizzle D1 driver so the routes run without a real database. Every
-// builder method is chainable; `.get()` resolves the org lookup and the alerts
-// list query (`.limit()`) resolves to an empty array — enough to exercise the
-// auth middleware.
-vi.mock('drizzle-orm/d1', () => ({
-	drizzle: () => {
-		const chain: Record<string, unknown> = {
-			select: () => chain,
-			from: () => chain,
-			where: () => chain,
-			orderBy: () => chain,
-			limit: () => Promise.resolve([]),
-			get: () => Promise.resolve(orgResult),
-		}
-		return chain
-	},
-}))
+// Build the app against an in-memory store seeded with the given orgs. The store
+// is injected through createApp's resolver, so the routes run with no Drizzle
+// and no D1 — the auth middleware and handlers are exercised through the store
+// interface, the same seam production crosses.
+function appWith(orgs: Organization[]) {
+	return createApp(() => createInMemoryStore({ orgs }))
+}
 
-import { app } from './api'
-
-const env = { db: {} } as unknown as Env
-
-beforeEach(() => {
-	orgResult = orgRow
-})
+const env = {} as unknown as Env
 
 describe('GET /api/org/:organizationKey authentication', () => {
 	it('returns 401 when the Authorization header is missing', async () => {
-		const res = await app.request('/api/org/boone', {}, env)
+		const res = await appWith([orgRow]).request('/api/org/boone', {}, env)
 		expect(res.status).toBe(401)
 	})
 
 	it('returns 401 when the bearer token does not match access_key', async () => {
-		const res = await app.request(
+		const res = await appWith([orgRow]).request(
 			'/api/org/boone',
 			{ headers: { Authorization: 'Bearer wrong' } },
 			env,
@@ -47,7 +32,7 @@ describe('GET /api/org/:organizationKey authentication', () => {
 	})
 
 	it('returns 200 without access_key when the token matches', async () => {
-		const res = await app.request(
+		const res = await appWith([orgRow]).request(
 			'/api/org/boone',
 			{ headers: { Authorization: 'Bearer abcdef' } },
 			env,
@@ -59,8 +44,7 @@ describe('GET /api/org/:organizationKey authentication', () => {
 	})
 
 	it('returns 404 when the organization does not exist', async () => {
-		orgResult = undefined
-		const res = await app.request(
+		const res = await appWith([]).request(
 			'/api/org/missing',
 			{ headers: { Authorization: 'Bearer abcdef' } },
 			env,
@@ -71,12 +55,12 @@ describe('GET /api/org/:organizationKey authentication', () => {
 
 describe('GET /api/org/:organizationKey/alerts authentication', () => {
 	it('returns 401 without a valid token', async () => {
-		const res = await app.request('/api/org/boone/alerts', {}, env)
+		const res = await appWith([orgRow]).request('/api/org/boone/alerts', {}, env)
 		expect(res.status).toBe(401)
 	})
 
 	it('returns 200 with a valid token', async () => {
-		const res = await app.request(
+		const res = await appWith([orgRow]).request(
 			'/api/org/boone/alerts',
 			{ headers: { Authorization: 'Bearer abcdef' } },
 			env,

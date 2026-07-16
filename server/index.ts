@@ -1,106 +1,35 @@
 import PostalMime from 'postal-mime';
 import { WorkflowStep, WorkflowEvent, WorkflowEntrypoint } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import OpenAI from "openai";
-import { drizzle } from 'drizzle-orm/d1';
-import { eq } from 'drizzle-orm';
 
-import { app } from './api';
-import { organizations, alerts, type Organization, type Alert } from './schema';
-import { PREALERT_PROMPT_INSTRUCTIONS, TTS_INSTRUCTIONS } from './prompts';
-import { parseEmail, EmailParseError } from './parse';
+import { createApp } from './api';
+import { createD1Store } from './store';
+import { createOpenAIGenerator } from './generator';
+import { createR2AudioStore } from './audio';
+import { processPreAlert } from './pipeline';
 
 type WorkflowParams = {
 	emailTo: string;
 	emailFrom: string;
 	emailText: string;
 };
+
+/**
+ * The durable adapter for the pre-alert intake pipeline. Its only job is to wire
+ * the real adapters to `env` — the D1 store, the OpenAI generator, the R2 audio
+ * store, the Workflow's non-retryable signal, and the clock — and hand the
+ * request to `processPreAlert`, which owns the actual orchestration. The
+ * `step.do` durability boundaries live inside that module; the deep logic runs
+ * the same whether a real step memoizes or a fake step just invokes.
+ */
 export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep) {
-		const openai = new OpenAI({
-			apiKey: await this.env.ai_key.get(),
-			baseURL: await this.env.ai.gateway("sar").getUrl("openai"),
-			defaultHeaders: {
-				"cf-aig-authorization": `Bearer ${this.env.AI_GATEWAY_TOKEN}`,
-			}
-		});
-		const org_id = await step.do('Get Org', async () => {
-			const emails = event.payload.emailTo.split(',');
-			const org_key = emails[0].split('@')[0];
-			const db = drizzle(this.env.db);
-			const result = await db
-				.select({ org_id: organizations.org_id })
-				.from(organizations)
-				.where(eq(organizations.org_key, org_key))
-				.get();
-			if (!result) {
-				throw new NonRetryableError(`Org with key "${org_key}" not found!`);
-			}
-			return result.org_id;
-		});
-		const parsedEvent = await step.do('Parse Email', async () => {
-			try {
-				return parseEmail(event.payload.emailText);
-			} catch (err) {
-				if (err instanceof EmailParseError) {
-					throw new NonRetryableError(err.message);
-				}
-				throw err;
-			}
-		});
-		const ttsText = await step.do('Generate Text', async () => {
-			console.log({
-				from: event.payload.emailFrom,
-				to: event.payload.emailTo,
-				text: event.payload.emailText
-			});
-			const response = await openai.responses.create({
-				model: "gpt-4.1-nano",
-				instructions: PREALERT_PROMPT_INSTRUCTIONS,
-				input: JSON.stringify({
-					nature: parsedEvent.nature,
-					address: parsedEvent.address,
-					city: parsedEvent.city,
-				}),
-			});
-			return response.output_text;
-		});
-		const audio = await step.do('Get Audio', async () => {
-			const mp3 = await openai.audio.speech.create({
-				model: "gpt-4o-mini-tts",
-				voice: "nova",
-				instructions: TTS_INSTRUCTIONS,
-				input: ttsText,
-			});
-			return await mp3.arrayBuffer();
-		});
-		const audio_url = await step.do('Upload Audio', async () => {
-			const obj = await this.env.bucket.put(
-				`${event.instanceId}.mp3`,
-				audio,
-				{
-					httpMetadata: {
-						contentType: "audio/mpeg"
-					}
-				}
-			);
-			return obj.key;
-		});
-		await step.do('Save Record', async () => {
-			const db = drizzle(this.env.db);
-			await db.insert(alerts).values({
-				alert_id: event.instanceId,
-				organization: org_id,
-				body: ttsText,
-				audio_url: audio_url,
-				timestamp: Date.now(),
-				source: event.payload.emailText,
-				address: parsedEvent?.address || '',
-				city: parsedEvent?.city || '',
-				nature: parsedEvent?.nature || '',
-				latitude: parsedEvent.latitude,
-				longitude: parsedEvent.longitude,
-			});
+		await processPreAlert(step, event.payload, event.instanceId, {
+			store: createD1Store(this.env.db),
+			generator: await createOpenAIGenerator(this.env),
+			audioStore: createR2AudioStore(this.env.bucket),
+			nonRetryable: (message) => new NonRetryableError(message),
+			now: () => Date.now(),
 		});
 	}
 }
@@ -122,6 +51,8 @@ export async function emailHandler(message: ForwardableEmailMessage, env: Env, _
 	}
 }
 
+
+const app = createApp((env) => createD1Store(env.db));
 
 export default {
 	fetch: app.fetch,
