@@ -1,3 +1,10 @@
+/**
+ * NOTE: The wired pipeline no longer sends this to the model — alert text is now
+ * assembled deterministically (see `template.ts` / `createDeterministicGenerator`
+ * in `generator.ts`). It is retained as the spec these rules were ported from and
+ * as a reference for a possible LLM fallback. `TTS_INSTRUCTIONS` below is still
+ * live, used by `synthesizeSpeech`.
+ */
 export const PREALERT_PROMPT_INSTRUCTIONS = `
 Parse provided json into a message that will be utilized in a text to speech announcement for emergency responders.
 The format of the message should be the nature of the call, followed by the address repeated twice, followed by the city.

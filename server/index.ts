@@ -4,7 +4,7 @@ import { NonRetryableError } from 'cloudflare:workflows';
 
 import { createApp } from './api';
 import { createD1Store } from './store';
-import { createOpenAIGenerator } from './generator';
+import { createDeterministicGenerator } from './generator';
 import { createR2AudioStore } from './audio';
 import { processPreAlert } from './pipeline';
 
@@ -26,7 +26,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep) {
 		await processPreAlert(step, event.payload, event.instanceId, {
 			store: createD1Store(this.env.db),
-			generator: await createOpenAIGenerator(this.env),
+			generator: await createDeterministicGenerator(this.env),
 			audioStore: createR2AudioStore(this.env.bucket),
 			nonRetryable: (message) => new NonRetryableError(message),
 			now: () => Date.now(),
