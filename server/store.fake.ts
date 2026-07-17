@@ -33,8 +33,35 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 		async findAlert(orgId, alertId) {
 			return rows.find((a) => a.organization === orgId && a.alert_id === alertId);
 		},
+		async findRecentMatch(orgId, address, city, since) {
+			return rows
+				.filter(
+					(a) =>
+						a.organization === orgId &&
+						a.address === address &&
+						a.city === city &&
+						a.timestamp >= since,
+				)
+				.sort((a, b) => b.timestamp - a.timestamp)[0];
+		},
 		async insertAlert(alert) {
 			rows.push(alert);
+		},
+		async updateAlert(alert) {
+			const i = rows.findIndex(
+				(a) => a.organization === alert.organization && a.alert_id === alert.alert_id,
+			);
+			if (i >= 0) {
+				rows[i] = {
+					...rows[i],
+					body: alert.body,
+					audio_url: alert.audio_url,
+					source: alert.source,
+					nature: alert.nature,
+					latitude: alert.latitude,
+					longitude: alert.longitude,
+				};
+			}
 		},
 	};
 }

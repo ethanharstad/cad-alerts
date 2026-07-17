@@ -1,7 +1,16 @@
 import { parseEmail, EmailParseError } from './parse';
+import type { Alert } from '../shared/types';
 import type { AlertStore } from './store';
 import type { AlertGenerator } from './generator';
 import type { AudioStore } from './audio';
+
+/**
+ * Default dedup window: a pre-alert at the same `(organization, address, city)`
+ * as an existing alert newer than this span is treated as an update to that same
+ * incident (its nature was revised) rather than a new alert. Measured from the
+ * incident's first email, since an update keeps the original timestamp.
+ */
+export const DEFAULT_DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
 /** The pre-alert intake payload, as delivered by the email handler. */
 export interface PreAlertPayload {
@@ -34,6 +43,12 @@ export interface PreAlertDeps {
 	nonRetryable: (message: string) => Error;
 	/** The current time, in epoch milliseconds. */
 	now: () => number;
+	/**
+	 * Dedup window in milliseconds: a matching alert (same org + address + city)
+	 * newer than `now - dedupWindowMs` is updated in place instead of inserted.
+	 * See {@link DEFAULT_DEDUP_WINDOW_MS}.
+	 */
+	dedupWindowMs: number;
 }
 
 /**
@@ -84,18 +99,48 @@ export async function processPreAlert(
 	});
 
 	await step.do('Save Record', async () => {
-		await deps.store.insertAlert({
+		const now = deps.now();
+		// Multiple emails for one incident share a location; when the nature is
+		// revised a fresh email arrives. If a recent alert at the same location
+		// exists, update it in place rather than inserting a duplicate.
+		const match = await deps.store.findRecentMatch(
+			orgId,
+			preAlert.address,
+			preAlert.city,
+			now - deps.dedupWindowMs,
+		);
+
+		if (match) {
+			// Refresh the incident's details but keep its id and original
+			// timestamp (so it holds its place in the recent list). The new
+			// email's audio was uploaded under a fresh key; the superseded
+			// object is left orphaned in R2 — cleanup is out of scope and the
+			// AudioStore is write-only by design.
+			await deps.store.updateAlert({
+				...match,
+				body: text,
+				audio_url: audioUrl,
+				source: payload.emailText,
+				nature: preAlert.nature,
+				latitude: preAlert.latitude,
+				longitude: preAlert.longitude,
+			});
+			return;
+		}
+
+		const record: Alert = {
 			alert_id: alertId,
 			organization: orgId,
 			body: text,
 			audio_url: audioUrl,
-			timestamp: deps.now(),
+			timestamp: now,
 			source: payload.emailText,
 			address: preAlert.address,
 			city: preAlert.city,
 			nature: preAlert.nature,
 			latitude: preAlert.latitude,
 			longitude: preAlert.longitude,
-		});
+		};
+		await deps.store.insertAlert(record);
 	});
 }

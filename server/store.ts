@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, gte } from 'drizzle-orm';
 
 import { organizations, alerts } from './schema';
 import type { Organization, Alert } from '../shared/types';
@@ -24,8 +24,29 @@ export interface AlertStore {
 	 * with that id belongs to the org.
 	 */
 	findAlert(orgId: string, alertId: string): Promise<Alert | undefined>;
+	/**
+	 * The dedup probe: the most recent alert for an org at the same
+	 * `(address, city)` whose `timestamp` is at or after `since` (epoch ms), or
+	 * `undefined` when none. Multiple pre-alert emails for one incident share a
+	 * location, so a match within the dedup window is the same incident.
+	 */
+	findRecentMatch(
+		orgId: string,
+		address: string,
+		city: string,
+		since: number,
+	): Promise<Alert | undefined>;
 	/** Persist a fully-formed alert row. */
 	insertAlert(alert: Alert): Promise<void>;
+	/**
+	 * Refresh an existing incident's mutable details in place, matched by
+	 * `(organization, alert_id)`. Only the fields that change between emails for
+	 * the same incident are written (`body`, `audio_url`, `source`, `nature`,
+	 * `latitude`, `longitude`); `alert_id`, `timestamp`, `organization`,
+	 * `address`, and `city` are left untouched so the alert keeps its identity,
+	 * its position in the recent list, and its dedup match key.
+	 */
+	updateAlert(alert: Alert): Promise<void>;
 }
 
 /**
@@ -61,8 +82,39 @@ export function createD1Store(d1: D1Database): AlertStore {
 				.get();
 			return alert ?? undefined;
 		},
+		async findRecentMatch(orgId, address, city, since) {
+			const alert = await db
+				.select()
+				.from(alerts)
+				.where(and(
+					eq(alerts.organization, orgId),
+					eq(alerts.address, address),
+					eq(alerts.city, city),
+					gte(alerts.timestamp, since),
+				))
+				.orderBy(desc(alerts.timestamp))
+				.limit(1)
+				.get();
+			return alert ?? undefined;
+		},
 		async insertAlert(alert) {
 			await db.insert(alerts).values(alert);
+		},
+		async updateAlert(alert) {
+			await db
+				.update(alerts)
+				.set({
+					body: alert.body,
+					audio_url: alert.audio_url,
+					source: alert.source,
+					nature: alert.nature,
+					latitude: alert.latitude,
+					longitude: alert.longitude,
+				})
+				.where(and(
+					eq(alerts.organization, alert.organization),
+					eq(alerts.alert_id, alert.alert_id),
+				));
 		},
 	};
 }
