@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 
 import type { PreAlert } from './parse';
 import { PREALERT_PROMPT_INSTRUCTIONS, TTS_INSTRUCTIONS } from './prompts';
+import { renderAlertText, DEFAULT_ADDRESS_TEMPLATE, type AddressTemplate } from './template';
 
 /**
  * Turns a pre-alert into the spoken alert's parts. Two methods, not one, so the
@@ -51,5 +52,26 @@ export async function createOpenAIGenerator(env: Env): Promise<AlertGenerator> {
 			});
 			return mp3.arrayBuffer();
 		},
+	};
+}
+
+/**
+ * Deterministic text + OpenAI speech. The spoken text is assembled locally from
+ * a template ({@link renderAlertText}) with no model call and no secrets, so the
+ * same input always produces the same words; only speech synthesis still needs
+ * OpenAI, which this delegates to {@link createOpenAIGenerator}. The template is
+ * global for now (see {@link DEFAULT_ADDRESS_TEMPLATE}) but is passed in so it can
+ * later come from per-org settings.
+ */
+export async function createDeterministicGenerator(
+	env: Env,
+	template: AddressTemplate = DEFAULT_ADDRESS_TEMPLATE,
+): Promise<AlertGenerator> {
+	const openai = await createOpenAIGenerator(env);
+	return {
+		async generateText(preAlert) {
+			return renderAlertText(preAlert, template);
+		},
+		synthesizeSpeech: openai.synthesizeSpeech,
 	};
 }
