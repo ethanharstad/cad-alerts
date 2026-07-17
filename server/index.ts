@@ -6,7 +6,7 @@ import { createApp } from './api';
 import { createD1Store } from './store';
 import { createDeterministicGenerator } from './generator';
 import { createR2AudioStore } from './audio';
-import { processPreAlert } from './pipeline';
+import { processPreAlert, DEFAULT_DEDUP_WINDOW_MS } from './pipeline';
 
 type WorkflowParams = {
 	emailTo: string;
@@ -30,6 +30,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			audioStore: createR2AudioStore(this.env.bucket),
 			nonRetryable: (message) => new NonRetryableError(message),
 			now: () => Date.now(),
+			dedupWindowMs: DEFAULT_DEDUP_WINDOW_MS,
 		});
 	}
 }
