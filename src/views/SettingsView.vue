@@ -184,6 +184,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { getOrganization, updateOrganizationSettings, ApiError } from '@/api/client'
+import type { PublicOrganization } from '../../shared/types'
 import {
   TTS_TOKENS,
   DEFAULT_TTS_TEMPLATE,
@@ -216,15 +217,21 @@ const saveSettings = async () => {
   saving.value = true
   message.value = ''
   try {
-    await getOrganization(settingsStore.organizationKey, settingsStore.organizationSecret)
+    const org = await getOrganization(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+    )
     message.value = 'Settings verified and saved successfully!'
     messageType.value = 'success'
     setTimeout(() => {
       message.value = ''
     }, 3000)
-    // Credentials are good — pull this org's server-side settings so the
-    // Organization Settings section below reflects what is stored.
-    void loadOrgSettings()
+    // Credentials are good — reuse this verification response to populate the
+    // Organization Settings section, but only when it belongs to a different org
+    // than the one already shown, so unsaved edits are not overwritten.
+    if (loadedKey.value !== org.org_key) {
+      applyOrg(org)
+    }
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       message.value = 'Invalid Organization Secret for this key'
@@ -248,7 +255,10 @@ const defaultState = ref<string>('')
 const ttsTemplate = ref<string>('')
 
 const orgLoading = ref<boolean>(false)
-const orgLoaded = ref<boolean>(false)
+// The organization key whose settings currently populate the fields below, so we
+// only pull fresh values on first load or when the key changes — never clobbering
+// the user's unsaved edits on a same-org refresh.
+const loadedKey = ref<string | null>(null)
 const orgSaving = ref<boolean>(false)
 const orgMessage = ref<string>('')
 const orgMessageType = ref<'success' | 'error'>('success')
@@ -259,22 +269,25 @@ const templateEditor = ref<HTMLTextAreaElement | null>(null)
 const templateSegments = computed(() => parseTemplate(ttsTemplate.value))
 const templateValidation = computed(() => validateTemplate(ttsTemplate.value))
 
+// Populate the editable fields from a fetched org and record which key they
+// belong to. Callers decide *when* to apply so unsaved edits are not clobbered.
+const applyOrg = (org: PublicOrganization) => {
+  defaultCity.value = org.default_city ?? ''
+  defaultState.value = org.default_state ?? ''
+  ttsTemplate.value = org.tts_template ?? ''
+  loadedKey.value = org.org_key
+}
+
 const loadOrgSettings = async () => {
   if (!hasCredentials.value) return
   orgLoading.value = true
   orgMessage.value = ''
   try {
-    const org = await getOrganization(
-      settingsStore.organizationKey,
-      settingsStore.organizationSecret,
+    applyOrg(
+      await getOrganization(settingsStore.organizationKey, settingsStore.organizationSecret),
     )
-    defaultCity.value = org.default_city ?? ''
-    defaultState.value = org.default_state ?? ''
-    ttsTemplate.value = org.tts_template ?? ''
-    orgLoaded.value = true
   } catch {
-    // Leave orgLoaded false; the section shows a hint to configure credentials.
-    orgLoaded.value = false
+    // Leave loadedKey unset; the section still renders empty fields to edit.
   } finally {
     orgLoading.value = false
   }
@@ -331,9 +344,7 @@ const saveOrgSettings = async () => {
         tts_template: trimmedTemplate || null,
       },
     )
-    defaultCity.value = org.default_city ?? ''
-    defaultState.value = org.default_state ?? ''
-    ttsTemplate.value = org.tts_template ?? ''
+    applyOrg(org)
     orgMessage.value = 'Organization settings saved!'
     orgMessageType.value = 'success'
     setTimeout(() => {
