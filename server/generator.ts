@@ -2,7 +2,8 @@ import OpenAI from 'openai';
 
 import type { PreAlert } from './parse';
 import { PREALERT_PROMPT_INSTRUCTIONS, TTS_INSTRUCTIONS } from './prompts';
-import { renderAlertText, DEFAULT_ADDRESS_TEMPLATE, type AddressTemplate } from './template';
+import { renderAlertTextFromString } from './template';
+import { DEFAULT_TTS_TEMPLATE } from '../shared/ttsTemplate';
 
 /**
  * Turns a pre-alert into the spoken alert's parts. Two methods, not one, so the
@@ -10,8 +11,13 @@ import { renderAlertText, DEFAULT_ADDRESS_TEMPLATE, type AddressTemplate } from 
  * the costlier speech synthesis — a synthesis retry never regenerates the text.
  */
 export interface AlertGenerator {
-	/** Generate the spoken alert text for a pre-alert. */
-	generateText(preAlert: PreAlert): Promise<string>;
+	/**
+	 * Generate the spoken alert text for a pre-alert. `ttsTemplate` is the
+	 * organization's token template string; when omitted or null the generator
+	 * falls back to {@link DEFAULT_TTS_TEMPLATE}. Adapters that ask a model to
+	 * produce the text ignore it.
+	 */
+	generateText(preAlert: PreAlert, ttsTemplate?: string | null): Promise<string>;
 	/** Synthesize speech audio for already-generated alert text. */
 	synthesizeSpeech(text: string): Promise<ArrayBuffer>;
 }
@@ -31,7 +37,7 @@ export async function createOpenAIGenerator(env: Env): Promise<AlertGenerator> {
 		},
 	});
 	return {
-		async generateText(preAlert) {
+		async generateText(preAlert, _ttsTemplate) {
 			const response = await openai.responses.create({
 				model: 'gpt-4.1-nano',
 				instructions: PREALERT_PROMPT_INSTRUCTIONS,
@@ -57,20 +63,17 @@ export async function createOpenAIGenerator(env: Env): Promise<AlertGenerator> {
 
 /**
  * Deterministic text + OpenAI speech. The spoken text is assembled locally from
- * a template ({@link renderAlertText}) with no model call and no secrets, so the
- * same input always produces the same words; only speech synthesis still needs
- * OpenAI, which this delegates to {@link createOpenAIGenerator}. The template is
- * global for now (see {@link DEFAULT_ADDRESS_TEMPLATE}) but is passed in so it can
- * later come from per-org settings.
+ * a token template string ({@link renderAlertTextFromString}) with no model call
+ * and no secrets, so the same input always produces the same words; only speech
+ * synthesis still needs OpenAI, which this delegates to
+ * {@link createOpenAIGenerator}. The template is supplied per pre-alert (the
+ * organization's `tts_template`), falling back to {@link DEFAULT_TTS_TEMPLATE}.
  */
-export async function createDeterministicGenerator(
-	env: Env,
-	template: AddressTemplate = DEFAULT_ADDRESS_TEMPLATE,
-): Promise<AlertGenerator> {
+export async function createDeterministicGenerator(env: Env): Promise<AlertGenerator> {
 	const openai = await createOpenAIGenerator(env);
 	return {
-		async generateText(preAlert) {
-			return renderAlertText(preAlert, template);
+		async generateText(preAlert, ttsTemplate) {
+			return renderAlertTextFromString(preAlert, ttsTemplate ?? DEFAULT_TTS_TEMPLATE);
 		},
 		synthesizeSpeech: openai.synthesizeSpeech,
 	};

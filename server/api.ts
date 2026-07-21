@@ -3,8 +3,9 @@ import { HTTPException } from 'hono/http-exception';
 import { createMiddleware } from 'hono/factory';
 import { timingSafeEqual } from 'hono/utils/buffer';
 
-import type { Organization, PublicOrganization } from '../shared/types';
+import type { Organization, PublicOrganization, OrgSettings } from '../shared/types';
 import type { AlertStore } from './store';
+import { validateTemplate } from '../shared/ttsTemplate';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -55,11 +56,56 @@ export function createApp(resolveStore: (env: Env) => AlertStore) {
 		await next();
 	});
 
+	// Strip the access_key shared secret from an org row for a client response.
+	const toPublicOrganization = (org: Organization): PublicOrganization => {
+		const { access_key: _access_key, ...pub } = org;
+		return pub;
+	};
+
 	app.get('/org/:organizationKey', requireOrgAuth, async (c) => {
-		const { org_id, org_key, name } = c.get('organization');
 		// Never return access_key to the client.
-		const publicOrganization: PublicOrganization = { org_id, org_key, name };
-		return c.json(publicOrganization);
+		return c.json(toPublicOrganization(c.get('organization')));
+	});
+
+	app.put('/org/:organizationKey', requireOrgAuth, async (c) => {
+		const organization = c.get('organization');
+
+		// Coerce missing/blank fields to null so a cleared input falls back to the
+		// app default rather than storing an empty string.
+		const normalize = (value: unknown): string | null => {
+			if (typeof value !== 'string') return null;
+			const trimmed = value.trim();
+			return trimmed.length > 0 ? trimmed : null;
+		};
+
+		let body: Record<string, unknown>;
+		try {
+			body = (await c.req.json()) as Record<string, unknown>;
+		} catch {
+			throw new HTTPException(400, { message: 'Invalid JSON body' });
+		}
+
+		const settings: OrgSettings = {
+			default_city: normalize(body.default_city),
+			default_state: normalize(body.default_state),
+			tts_template: normalize(body.tts_template),
+		};
+
+		// Reject templates that reference unknown tokens, so a bad template can
+		// never reach the generation pipeline.
+		if (settings.tts_template !== null) {
+			const { valid, unknownTokens } = validateTemplate(settings.tts_template);
+			if (!valid) {
+				throw new HTTPException(400, {
+					message: `Unknown template token(s): ${unknownTokens.join(', ')}`,
+				});
+			}
+		}
+
+		await c.get('store').updateOrgSettings(organization.org_id, settings);
+
+		// Return the updated public org so the client can refresh its view.
+		return c.json(toPublicOrganization({ ...organization, ...settings }));
 	});
 
 	app.get('/org/:organizationKey/alerts', requireOrgAuth, async (c) => {

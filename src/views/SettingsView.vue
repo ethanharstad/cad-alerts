@@ -72,19 +72,133 @@
       <div v-if="message" class="message" :class="messageType">
         {{ message }}
       </div>
+
+      <div class="org-settings">
+        <h2>Organization Settings</h2>
+        <p class="section-note">
+          These settings are stored on the organization and shared by everyone using it.
+        </p>
+
+        <p v-if="!hasCredentials" class="help-text">
+          Save a valid Organization Key and Secret above to load and edit these settings.
+        </p>
+        <p v-else-if="orgLoading" class="help-text">Loading organization settings…</p>
+
+        <form v-if="hasCredentials" @submit.prevent="saveOrgSettings" class="settings-form">
+          <div class="form-group">
+            <label for="defaultCity">Default City</label>
+            <input
+              id="defaultCity"
+              v-model="defaultCity"
+              type="text"
+              placeholder="e.g. Boone"
+            />
+            <p class="help-text">
+              Used to disambiguate addresses when mapping is added later.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label for="defaultState">Default State</label>
+            <input
+              id="defaultState"
+              v-model="defaultState"
+              type="text"
+              placeholder="e.g. IA"
+            />
+            <p class="help-text">Paired with the default city for address disambiguation.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="ttsTemplate">Text-to-Speech Template</label>
+            <p class="help-text">
+              Click a token to insert it, and add your own text around it. Write
+              <code v-pre>{address}</code> twice to have the address spoken twice. Periods
+              separate spoken sentences.
+            </p>
+
+            <div class="token-palette">
+              <button
+                v-for="token in TTS_TOKENS"
+                :key="token.name"
+                type="button"
+                class="token-chip"
+                :title="token.description"
+                @click="insertToken(token.name)"
+              >
+                {{ '{' + token.name + '}' }}
+              </button>
+            </div>
+
+            <textarea
+              id="ttsTemplate"
+              ref="templateEditor"
+              v-model="ttsTemplate"
+              rows="3"
+              class="template-input"
+              placeholder="e.g. {nature}. {address}. {address}. in {city}."
+            ></textarea>
+
+            <div class="template-preview" aria-hidden="true">
+              <template v-for="(segment, i) in templateSegments" :key="i">
+                <span v-if="segment.type === 'text'" class="seg-text">{{ segment.value }}</span>
+                <span
+                  v-else
+                  class="seg-token"
+                  :class="segment.known ? 'seg-known' : 'seg-unknown'"
+                  :title="segment.known ? 'Recognized token' : 'Unknown token'"
+                  >{{ '{' + segment.name + '}' }}</span
+                >
+              </template>
+            </div>
+
+            <p v-if="!templateValidation.valid" class="help-text template-error">
+              Unknown token(s): {{ templateValidation.unknownTokens.join(', ') }}
+            </p>
+
+            <button type="button" class="link-button" @click="resetTemplate">
+              Reset to default template
+            </button>
+          </div>
+
+          <div class="button-group">
+            <button
+              type="submit"
+              class="btn-primary"
+              :disabled="orgSaving || !templateValidation.valid"
+            >
+              {{ orgSaving ? 'Saving…' : 'Save Organization Settings' }}
+            </button>
+          </div>
+        </form>
+
+        <div v-if="orgMessage" class="message" :class="orgMessageType">
+          {{ orgMessage }}
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-import { getOrganization, ApiError } from '@/api/client'
+import { getOrganization, updateOrganizationSettings, ApiError } from '@/api/client'
+import {
+  TTS_TOKENS,
+  DEFAULT_TTS_TEMPLATE,
+  parseTemplate,
+  validateTemplate,
+} from '../../shared/ttsTemplate'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
 const messageType = ref<'success' | 'error'>('success')
 const saving = ref<boolean>(false)
+
+const hasCredentials = computed(
+  () => !!settingsStore.organizationKey && !!settingsStore.organizationSecret,
+)
 
 const saveSettings = async () => {
   if (!settingsStore.organizationKey || !settingsStore.organizationSecret) {
@@ -108,6 +222,9 @@ const saveSettings = async () => {
     setTimeout(() => {
       message.value = ''
     }, 3000)
+    // Credentials are good — pull this org's server-side settings so the
+    // Organization Settings section below reflects what is stored.
+    void loadOrgSettings()
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       message.value = 'Invalid Organization Secret for this key'
@@ -121,6 +238,124 @@ const saveSettings = async () => {
     saving.value = false
   }
 }
+
+// ---- Organization Settings (server-side, per-organization) ----
+// These live on the organization row, unlike the device settings above which
+// are local to this browser. They are loaded from and saved to the API.
+
+const defaultCity = ref<string>('')
+const defaultState = ref<string>('')
+const ttsTemplate = ref<string>('')
+
+const orgLoading = ref<boolean>(false)
+const orgLoaded = ref<boolean>(false)
+const orgSaving = ref<boolean>(false)
+const orgMessage = ref<string>('')
+const orgMessageType = ref<'success' | 'error'>('success')
+
+const templateEditor = ref<HTMLTextAreaElement | null>(null)
+
+// Live segmentation of the template for token highlighting in the editor.
+const templateSegments = computed(() => parseTemplate(ttsTemplate.value))
+const templateValidation = computed(() => validateTemplate(ttsTemplate.value))
+
+const loadOrgSettings = async () => {
+  if (!hasCredentials.value) return
+  orgLoading.value = true
+  orgMessage.value = ''
+  try {
+    const org = await getOrganization(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+    )
+    defaultCity.value = org.default_city ?? ''
+    defaultState.value = org.default_state ?? ''
+    ttsTemplate.value = org.tts_template ?? ''
+    orgLoaded.value = true
+  } catch {
+    // Leave orgLoaded false; the section shows a hint to configure credentials.
+    orgLoaded.value = false
+  } finally {
+    orgLoading.value = false
+  }
+}
+
+// Insert a token at the cursor (or append) and keep focus in the editor.
+const insertToken = (name: string) => {
+  const token = `{${name}}`
+  const el = templateEditor.value
+  if (!el) {
+    ttsTemplate.value += token
+    return
+  }
+  const start = el.selectionStart ?? ttsTemplate.value.length
+  const end = el.selectionEnd ?? ttsTemplate.value.length
+  ttsTemplate.value = ttsTemplate.value.slice(0, start) + token + ttsTemplate.value.slice(end)
+  // Restore the caret after the inserted token on the next tick.
+  requestAnimationFrame(() => {
+    el.focus()
+    const caret = start + token.length
+    el.setSelectionRange(caret, caret)
+  })
+}
+
+const resetTemplate = () => {
+  ttsTemplate.value = DEFAULT_TTS_TEMPLATE
+}
+
+const saveOrgSettings = async () => {
+  if (!hasCredentials.value) {
+    orgMessage.value = 'Configure and save your organization credentials first'
+    orgMessageType.value = 'error'
+    return
+  }
+  const trimmedTemplate = ttsTemplate.value.trim()
+  if (trimmedTemplate) {
+    const { valid, unknownTokens } = validateTemplate(trimmedTemplate)
+    if (!valid) {
+      orgMessage.value = `Unknown token(s): ${unknownTokens.join(', ')}`
+      orgMessageType.value = 'error'
+      return
+    }
+  }
+
+  orgSaving.value = true
+  orgMessage.value = ''
+  try {
+    const org = await updateOrganizationSettings(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+      {
+        default_city: defaultCity.value.trim() || null,
+        default_state: defaultState.value.trim() || null,
+        tts_template: trimmedTemplate || null,
+      },
+    )
+    defaultCity.value = org.default_city ?? ''
+    defaultState.value = org.default_state ?? ''
+    ttsTemplate.value = org.tts_template ?? ''
+    orgMessage.value = 'Organization settings saved!'
+    orgMessageType.value = 'success'
+    setTimeout(() => {
+      orgMessage.value = ''
+    }, 3000)
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 400) {
+      orgMessage.value = 'The server rejected the template — check the tokens'
+    } else if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+      orgMessage.value = 'Could not authenticate — check your organization credentials'
+    } else {
+      orgMessage.value = 'Could not save organization settings — please try again'
+    }
+    orgMessageType.value = 'error'
+  } finally {
+    orgSaving.value = false
+  }
+}
+
+onMounted(() => {
+  void loadOrgSettings()
+})
 
 const clearSettings = () => {
   if (confirm('Are you sure you want to clear all settings?')) {
@@ -286,6 +521,111 @@ button {
   background: #f8d7da;
   color: #721c24;
   border: 1px solid #f5c6cb;
+}
+
+.org-settings {
+  margin-top: 2.5rem;
+}
+
+.org-settings h2 {
+  margin-bottom: 0.25rem;
+  color: var(--color-heading);
+}
+
+.section-note {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+  color: var(--color-text-muted, #666);
+}
+
+textarea.template-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 1rem;
+  background: var(--color-background);
+  color: var(--color-text);
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+textarea.template-input:focus {
+  outline: none;
+  border-color: var(--color-border-hover);
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+}
+
+.token-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.token-chip {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-background-mute);
+  color: var(--color-text);
+  font-family: monospace;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.token-chip:hover {
+  border-color: var(--color-border-hover);
+}
+
+.template-preview {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  background: var(--color-background);
+  font-family: monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1.5rem;
+}
+
+.seg-text {
+  color: var(--color-text);
+}
+
+.seg-token {
+  border-radius: 3px;
+  padding: 0 0.15rem;
+  font-weight: 600;
+}
+
+.seg-known {
+  background: #d4edda;
+  color: #155724;
+}
+
+.seg-unknown {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.template-error {
+  color: #721c24;
+}
+
+.link-button {
+  margin-top: 0.75rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: hsla(160, 100%, 37%, 1);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 @media (min-width: 1024px) {

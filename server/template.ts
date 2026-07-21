@@ -11,6 +11,7 @@ import type { PreAlert } from './parse';
 import { tokenizeAddress, type AddressTokens, type StreetRef } from './address';
 import { spellNumber, spellOrdinal, type NumberStyle } from './numbers';
 import { DIRECTIONALS, NATURE_DICTIONARY, SUFFIXES } from './dictionaries';
+import { DEFAULT_TTS_TEMPLATE, parseTemplate } from '../shared/ttsTemplate';
 
 /** How the spoken alert is assembled from address tokens. */
 export interface AddressTemplate {
@@ -162,4 +163,59 @@ export function renderAlertText(
 	sentences.push(`${template.cityPrefix} ${titleCase(preAlert.city)}`);
 
 	return sentences.map(capitalizeFirst).join('. ') + '.';
+}
+
+/**
+ * The spoken value for each template token, given a parsed pre-alert. The
+ * pronunciation choices (paired street numbers, spelled hundred-block streets)
+ * are the historical defaults, reused from {@link DEFAULT_ADDRESS_TEMPLATE} so
+ * the token STRING controls only ordering, repetition, and free text — not how
+ * the address itself is spoken. Optional tokens (`business`, `apartment`) are
+ * empty strings when absent; the empty sentence they leave behind collapses in
+ * {@link renderAlertTextFromString}.
+ */
+function tokenFragments(preAlert: PreAlert): Record<string, string> {
+	const tokens = tokenizeAddress(preAlert.address);
+	return {
+		nature: formatNature(preAlert.nature),
+		address: renderAddressClause(tokens, DEFAULT_ADDRESS_TEMPLATE),
+		city: preAlert.city ? titleCase(preAlert.city) : '',
+		business: tokens.business ? titleCase(tokens.business) : '',
+		apartment:
+			tokens.kind === 'street' && tokens.apartment
+				? `apartment ${tokens.apartment.toLowerCase()}`
+				: '',
+	};
+}
+
+/**
+ * Assemble the spoken alert body from a token-based template string (see
+ * `shared/ttsTemplate.ts`). Each `{token}` is replaced by its spoken value and
+ * everything else is literal free text; an unknown token renders as empty and
+ * never throws — the write API validates templates before they are stored.
+ *
+ * After substitution the result is split into sentences on ".", each sentence is
+ * whitespace-collapsed, trimmed, and capitalized, and empty sentences are
+ * dropped. That last step is what lets an absent optional token (an empty
+ * `{business}`) disappear cleanly and reproduces the historical per-sentence
+ * capitalization ("In Boone.").
+ */
+export function renderAlertTextFromString(
+	preAlert: PreAlert,
+	template: string = DEFAULT_TTS_TEMPLATE,
+): string {
+	const fragments = tokenFragments(preAlert);
+
+	let assembled = '';
+	for (const segment of parseTemplate(template)) {
+		assembled += segment.type === 'text' ? segment.value : fragments[segment.name] ?? '';
+	}
+
+	const sentences = assembled
+		.split('.')
+		.map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+		.filter(Boolean)
+		.map(capitalizeFirst);
+
+	return sentences.length > 0 ? `${sentences.join('. ')}.` : '';
 }
