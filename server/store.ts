@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq, desc, and, gte } from 'drizzle-orm';
 
 import { organizations, alerts } from './schema';
-import type { Organization, Alert } from '../shared/types';
+import type { Organization, Alert, OrgSettings } from '../shared/types';
 
 /**
  * The Alert store — the single seam through which the app reads and writes
@@ -17,6 +17,12 @@ export interface AlertStore {
 	 * The caller is responsible for never returning `access_key` to a client.
 	 */
 	findOrgByKey(orgKey: string): Promise<Organization | undefined>;
+	/**
+	 * Update an organization's editable settings (default city/state and the TTS
+	 * template), matched by `org_id`. Only the settings fields are written; the
+	 * org's identity and `access_key` are untouched.
+	 */
+	updateOrgSettings(orgId: string, settings: OrgSettings): Promise<void>;
 	/** The most recent `limit` alerts for an organization, newest first. */
 	latestAlerts(orgId: string, limit: number): Promise<Alert[]>;
 	/**
@@ -65,6 +71,16 @@ export function createD1Store(d1: D1Database): AlertStore {
 				.where(eq(organizations.org_key, orgKey))
 				.get();
 			return org ?? undefined;
+		},
+		async updateOrgSettings(orgId, settings) {
+			await db
+				.update(organizations)
+				.set({
+					default_city: settings.default_city,
+					default_state: settings.default_state,
+					tts_template: settings.tts_template,
+				})
+				.where(eq(organizations.org_id, orgId));
 		},
 		async latestAlerts(orgId, limit) {
 			return db

@@ -3,7 +3,10 @@ CREATE TABLE IF NOT EXISTS organizations (
     org_id TEXT PRIMARY KEY,
     org_key TEXT,
     access_key TEXT,
-    name TEXT
+    name TEXT,
+    default_city TEXT,
+    default_state TEXT,
+    tts_template TEXT
 );
 CREATE INDEX idx_organization_key on organizations(org_key);
 

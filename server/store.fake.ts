@@ -1,4 +1,4 @@
-import type { Organization, Alert } from '../shared/types';
+import type { Organization, Alert, OrgSettings } from '../shared/types';
 import type { AlertStore } from './store';
 
 /**
@@ -23,6 +23,14 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 	return {
 		async findOrgByKey(orgKey) {
 			return orgs.find((o) => o.org_key === orgKey);
+		},
+		async updateOrgSettings(orgId, settings) {
+			const org = orgs.find((o) => o.org_id === orgId);
+			if (org) {
+				org.default_city = settings.default_city;
+				org.default_state = settings.default_state;
+				org.tts_template = settings.tts_template;
+			}
 		},
 		async latestAlerts(orgId, limit) {
 			return rows

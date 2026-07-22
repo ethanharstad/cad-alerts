@@ -66,13 +66,15 @@ export async function processPreAlert(
 	alertId: string,
 	deps: PreAlertDeps,
 ): Promise<void> {
-	const orgId = await step.do('Get Org', async () => {
+	const { org_id: orgId, tts_template: ttsTemplate } = await step.do('Get Org', async () => {
 		const orgKey = payload.emailTo.split(',')[0].split('@')[0];
 		const org = await deps.store.findOrgByKey(orgKey);
 		if (!org) {
 			throw deps.nonRetryable(`Org with key "${orgKey}" not found!`);
 		}
-		return org.org_id;
+		// Return plain JSON so the Workflow engine can memoize this step. The
+		// org's token template drives the spoken text in "Generate Text" below.
+		return { org_id: org.org_id, tts_template: org.tts_template };
 	});
 
 	const preAlert = await step.do('Parse Email', async () => {
@@ -87,7 +89,7 @@ export async function processPreAlert(
 	});
 
 	const text = await step.do('Generate Text', async () => {
-		return deps.generator.generateText(preAlert);
+		return deps.generator.generateText(preAlert, ttsTemplate);
 	});
 
 	const audio = await step.do('Get Audio', async () => {

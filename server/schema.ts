@@ -6,6 +6,11 @@ export const organizations = sqliteTable('organizations', {
 	org_key: text('org_key').notNull(),
 	access_key: text('access_key').notNull(),
 	name: text('name').notNull(),
+	// Organization-level settings. Nullable so pre-existing rows read as null and
+	// the app falls back to defaults (e.g. DEFAULT_TTS_TEMPLATE).
+	default_city: text('default_city'),
+	default_state: text('default_state'),
+	tts_template: text('tts_template'),
 }, (table) => ({
 	orgKeyIdx: index('idx_organization_key').on(table.org_key),
 }))

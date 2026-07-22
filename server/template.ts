@@ -11,8 +11,14 @@ import type { PreAlert } from './parse';
 import { tokenizeAddress, type AddressTokens, type StreetRef } from './address';
 import { spellNumber, spellOrdinal, type NumberStyle } from './numbers';
 import { DIRECTIONALS, NATURE_DICTIONARY, SUFFIXES } from './dictionaries';
+import { DEFAULT_TTS_TEMPLATE, parseTemplate } from '../shared/ttsTemplate';
 
-/** How the spoken alert is assembled from address tokens. */
+/**
+ * How a numbered address is pronounced. These are the only knobs the spoken
+ * output still varies on; ordering, repetition, and free text now live in the
+ * token template string (see `shared/ttsTemplate.ts` and
+ * {@link renderAlertTextFromString}).
+ */
 export interface AddressTemplate {
 	/** Pronunciation of the house number and hundred-block number. */
 	streetNumberStyle: NumberStyle;
@@ -20,29 +26,17 @@ export interface AddressTemplate {
 	streetNameStyle: NumberStyle;
 	/** Pronunciation of a numbered street inside a hundred block. */
 	hundredBlockStreetStyle: NumberStyle;
-	/** How many times the address clause is repeated for clarity. */
-	addressRepeat: number;
-	/** Whether to speak apartment/unit detail. */
-	includeApartment: boolean;
-	/** Whether to speak a business name. */
-	includeBusiness: boolean;
-	/** Preposition spoken before the city, e.g. "in". */
-	cityPrefix: string;
 }
 
 /**
- * The global template. Chosen to reproduce the historical prompt's spoken output:
- * paired street numbers ("nine fifteen"), the apartment dropped, the business
- * spoken, and the hundred-block street fully pronounced ("two hundred thirtieth").
+ * The pronunciation defaults used when rendering the `{address}` fragment:
+ * paired street numbers ("nine fifteen") and a fully pronounced hundred-block
+ * street ("two hundred thirtieth"), matching the historical spoken output.
  */
 export const DEFAULT_ADDRESS_TEMPLATE: AddressTemplate = {
 	streetNumberStyle: 'paired',
 	streetNameStyle: 'paired',
 	hundredBlockStreetStyle: 'spelled',
-	addressRepeat: 2,
-	includeApartment: false,
-	includeBusiness: true,
-	cityPrefix: 'in',
 };
 
 /** Title-case a run of words: "ADOBE LOUNGE" -> "Adobe Lounge". */
@@ -133,33 +127,71 @@ function renderAddressClause(tokens: AddressTokens, template: AddressTemplate): 
 }
 
 /**
- * Assemble the full spoken alert body for a pre-alert: the nature, the address
- * clause repeated per the template, any apartment/business detail, then the
- * city. Never throws — a degenerate address still yields nature + text + city.
+ * The spoken value for each template token, given a parsed pre-alert. The
+ * pronunciation choices (paired street numbers, spelled hundred-block streets)
+ * are the historical defaults, reused from {@link DEFAULT_ADDRESS_TEMPLATE} so
+ * the token STRING controls only ordering, repetition, and free text — not how
+ * the address itself is spoken. Optional tokens (`business`, `apartment`) are
+ * empty strings when absent; the empty sentence they leave behind collapses in
+ * {@link renderAlertTextFromString}.
  */
-export function renderAlertText(
-	preAlert: PreAlert,
-	template: AddressTemplate = DEFAULT_ADDRESS_TEMPLATE,
-): string {
+function tokenFragments(preAlert: PreAlert): Record<string, string> {
 	const tokens = tokenizeAddress(preAlert.address);
-	const clause = renderAddressClause(tokens, template);
+	return {
+		nature: formatNature(preAlert.nature),
+		address: renderAddressClause(tokens, DEFAULT_ADDRESS_TEMPLATE),
+		city: preAlert.city ? titleCase(preAlert.city) : '',
+		business: tokens.business ? titleCase(tokens.business) : '',
+		apartment:
+			tokens.kind === 'street' && tokens.apartment
+				? `apartment ${tokens.apartment.toLowerCase()}`
+				: '',
+	};
+}
 
-	const sentences: string[] = [formatNature(preAlert.nature)];
+/**
+ * Assemble the spoken alert body from a token-based template string (see
+ * `shared/ttsTemplate.ts`). Each recognized `{token}` is replaced by its spoken
+ * value and everything else is literal free text. An unrecognized token renders
+ * as empty and never throws — only tokens the shared registry knows are
+ * substituted, so a name like `{toString}` can never surface a JS internal.
+ *
+ * Sentences are delimited only by "." characters in the template's FREE TEXT,
+ * never by periods inside a token's spoken value — so a business like "St. Luke's
+ * Hospital" stays one sentence. Each sentence is whitespace-collapsed, trimmed,
+ * and capitalized, and empty sentences are dropped. That drop lets an absent
+ * optional token (an empty `{business}`) disappear cleanly and reproduces the
+ * historical per-sentence capitalization ("In Boone.").
+ */
+export function renderAlertTextFromString(
+	preAlert: PreAlert,
+	template: string = DEFAULT_TTS_TEMPLATE,
+): string {
+	const fragments = tokenFragments(preAlert);
 
-	const repeat = Math.max(1, template.addressRepeat);
-	for (let i = 0; i < repeat; i++) {
-		if (clause) sentences.push(clause);
+	const sentences: string[] = [];
+	let current = '';
+	const flush = () => {
+		const sentence = current.replace(/\s+/g, ' ').trim();
+		if (sentence) sentences.push(capitalizeFirst(sentence));
+		current = '';
+	};
+
+	for (const segment of parseTemplate(template)) {
+		if (segment.type === 'token') {
+			// Only known tokens are substituted; unknown names contribute nothing.
+			current += segment.known ? fragments[segment.name] ?? '' : '';
+			continue;
+		}
+		// A "." in literal free text ends the current sentence; periods that come
+		// from a token's value (already appended above) do not.
+		const parts = segment.value.split('.');
+		for (let i = 0; i < parts.length; i++) {
+			current += parts[i];
+			if (i < parts.length - 1) flush();
+		}
 	}
+	flush();
 
-	if (template.includeApartment && tokens.kind === 'street' && tokens.apartment) {
-		sentences.push(`apartment ${tokens.apartment.toLowerCase()}`);
-	}
-
-	if (template.includeBusiness && tokens.business) {
-		sentences.push(titleCase(tokens.business));
-	}
-
-	sentences.push(`${template.cityPrefix} ${titleCase(preAlert.city)}`);
-
-	return sentences.map(capitalizeFirst).join('. ') + '.';
+	return sentences.length > 0 ? `${sentences.join('. ')}.` : '';
 }

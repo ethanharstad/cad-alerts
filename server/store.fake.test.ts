@@ -3,7 +3,15 @@ import { describe, it, expect } from 'vitest'
 import { createInMemoryStore } from './store.fake'
 import type { Alert, Organization } from '../shared/types'
 
-const org: Organization = { org_id: 'o1', org_key: 'boone', access_key: 'k', name: 'Boone FD' }
+const org: Organization = {
+	org_id: 'o1',
+	org_key: 'boone',
+	access_key: 'k',
+	name: 'Boone FD',
+	default_city: null,
+	default_state: null,
+	tts_template: null,
+}
 
 function alert(id: string, orgId: string, timestamp: number, overrides: Partial<Alert> = {}): Alert {
 	return {
@@ -30,6 +38,31 @@ describe('createInMemoryStore', () => {
 		const store = createInMemoryStore({ orgs: [org] })
 		expect(await store.findOrgByKey('boone')).toEqual(org)
 		expect(await store.findOrgByKey('nope')).toBeUndefined()
+	})
+
+	it('updateOrgSettings writes the settings fields, scoped by org_id', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...org }] })
+		await store.updateOrgSettings('o1', {
+			default_city: 'Ames',
+			default_state: 'IA',
+			tts_template: '{nature}.',
+		})
+		expect(await store.findOrgByKey('boone')).toMatchObject({
+			org_id: 'o1',
+			default_city: 'Ames',
+			default_state: 'IA',
+			tts_template: '{nature}.',
+		})
+	})
+
+	it('updateOrgSettings is a no-op for an unknown org', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...org }] })
+		await store.updateOrgSettings('nope', {
+			default_city: 'Ames',
+			default_state: 'IA',
+			tts_template: '{nature}.',
+		})
+		expect(await store.findOrgByKey('boone')).toMatchObject({ default_city: null })
 	})
 
 	it('latestAlerts returns newest first and respects the limit', async () => {

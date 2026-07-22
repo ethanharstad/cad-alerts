@@ -11,7 +11,15 @@ import { createFakeGenerator } from './generator.fake'
 import { createInMemoryAudioStore } from './audio.fake'
 import type { Alert, Organization } from '../shared/types'
 
-const org: Organization = { org_id: 'o1', org_key: 'boone', access_key: 'k', name: 'Boone FD' }
+const org: Organization = {
+	org_id: 'o1',
+	org_key: 'boone',
+	access_key: 'k',
+	name: 'Boone FD',
+	default_city: null,
+	default_state: null,
+	tts_template: null,
+}
 
 // A pre-alert email addressed to the org's key, with a well-formed body.
 const payload = {
@@ -105,6 +113,24 @@ describe('processPreAlert', () => {
 			'Upload Audio',
 			'Save Record',
 		])
+	})
+
+	it("passes the org's tts_template into text generation", async () => {
+		const { step } = recordingStep()
+		const store = createInMemoryStore({
+			orgs: [{ ...org, tts_template: '{nature}. in {city}.' }],
+		})
+		const generator = createFakeGenerator({ text: 'Sick Person. In Boone.' })
+		await processPreAlert(step, payload, 'inst-1', deps({ store, generator }))
+		expect(generator.receivedTemplates).toEqual(['{nature}. in {city}.'])
+	})
+
+	it('passes null when the org has no tts_template', async () => {
+		const { step } = recordingStep()
+		const store = createInMemoryStore({ orgs: [org] })
+		const generator = createFakeGenerator()
+		await processPreAlert(step, payload, 'inst-1', deps({ store, generator }))
+		expect(generator.receivedTemplates).toEqual([null])
 	})
 
 	it('signals non-retryable and stores nothing when the org is unknown', async () => {

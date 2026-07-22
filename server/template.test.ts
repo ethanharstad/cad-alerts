@@ -1,76 +1,100 @@
 import { describe, it, expect } from 'vitest';
 import type { PreAlert } from './parse';
-import {
-	renderAlertText,
-	formatNature,
-	DEFAULT_ADDRESS_TEMPLATE,
-	type AddressTemplate,
-} from './template';
+import { renderAlertTextFromString, formatNature } from './template';
+import { DEFAULT_TTS_TEMPLATE } from '../shared/ttsTemplate';
 
 /** Build a PreAlert; coordinates are irrelevant to spoken text. */
 function preAlert(nature: string, address: string, city: string): PreAlert {
 	return { nature, address, city, latitude: 0, longitude: 0 };
 }
 
-describe('renderAlertText', () => {
-	it('reproduces the historical prompt example with an apartment dropped', () => {
+describe('renderAlertTextFromString', () => {
+	it('reproduces the historical output with the default template (apartment dropped)', () => {
 		expect(
-			renderAlertText(preAlert('BACK PAIN', '1400 22nd St ##6', 'BOONE')),
+			renderAlertTextFromString(preAlert('BACK PAIN', '1400 22nd St ##6', 'BOONE'), DEFAULT_TTS_TEMPLATE),
 		).toBe(
 			'Back Pain. Fourteen hundred twenty second street. Fourteen hundred twenty second street. In Boone.',
 		);
 	});
 
-	it('reproduces the historical prompt example with a directional and business', () => {
+	it('speaks a business when present and collapses the empty business sentence otherwise', () => {
 		expect(
-			renderAlertText(
+			renderAlertTextFromString(
 				preAlert('HEMORRHAGE', '915 W MAMIE EISENHOWER AVE; ADOBE LOUNGE', 'BOONE'),
+				DEFAULT_TTS_TEMPLATE,
 			),
 		).toBe(
 			'Hemorrhage. Nine fifteen west mamie eisenhower avenue. Nine fifteen west mamie eisenhower avenue. Adobe Lounge. In Boone.',
 		);
 	});
 
-	it('renders an intersection and expands a nature code', () => {
-		expect(renderAlertText(preAlert('MVC-PI', '16TH ST & LINN ST', 'AMES'))).toBe(
+	it('renders an intersection with the default template', () => {
+		expect(
+			renderAlertTextFromString(preAlert('MVC-PI', '16TH ST & LINN ST', 'AMES'), DEFAULT_TTS_TEMPLATE),
+		).toBe(
 			'Motor Vehicle Collision with injury. Intersection of sixteenth street and linn street. Intersection of sixteenth street and linn street. In Ames.',
 		);
 	});
 
-	it('renders a hundred block with a fully spelled street', () => {
+	it('renders a hundred block with the default template', () => {
 		expect(
-			renderAlertText(preAlert('FIRE-RESIDENCE', '1900BLK 230TH ST', 'BOONE')),
+			renderAlertTextFromString(preAlert('FIRE-RESIDENCE', '1900BLK 230TH ST', 'BOONE'), DEFAULT_TTS_TEMPLATE),
 		).toBe(
 			'Fire - Residence. Nineteen hundred block of two hundred thirtieth street. Nineteen hundred block of two hundred thirtieth street. In Boone.',
 		);
 	});
 
-	it('honors addressRepeat', () => {
-		const template: AddressTemplate = { ...DEFAULT_ADDRESS_TEMPLATE, addressRepeat: 1 };
+	it('defaults to DEFAULT_TTS_TEMPLATE when none is given', () => {
+		expect(renderAlertTextFromString(preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'))).toBe(
+			renderAlertTextFromString(
+				preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'),
+				DEFAULT_TTS_TEMPLATE,
+			),
+		);
+	});
+
+	it('repeats the address once per {address} occurrence', () => {
 		expect(
-			renderAlertText(preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'), template),
+			renderAlertTextFromString(preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'), '{nature}. {address}. in {city}.'),
 		).toBe('Sick Person. Seventeen oh four hawkeye drive. In Boone.');
 	});
 
-	it('speaks the apartment when the template opts in', () => {
-		const template: AddressTemplate = { ...DEFAULT_ADDRESS_TEMPLATE, includeApartment: true };
+	it('speaks the apartment when the template includes {apartment}', () => {
 		expect(
-			renderAlertText(preAlert('BACK PAIN', '1400 22nd St ##6', 'BOONE'), template),
-		).toBe(
-			'Back Pain. Fourteen hundred twenty second street. Fourteen hundred twenty second street. Apartment 6. In Boone.',
-		);
+			renderAlertTextFromString(
+				preAlert('BACK PAIN', '1400 22nd St ##6', 'BOONE'),
+				'{nature}. {address}. {apartment}. in {city}.',
+			),
+		).toBe('Back Pain. Fourteen hundred twenty second street. Apartment 6. In Boone.');
 	});
 
-	it('applies the street-number style override', () => {
-		const template: AddressTemplate = { ...DEFAULT_ADDRESS_TEMPLATE, streetNumberStyle: 'digits' };
+	it('renders unknown tokens as empty without throwing', () => {
 		expect(
-			renderAlertText(
-				preAlert('HEMORRHAGE', '915 W MAMIE EISENHOWER AVE', 'BOONE'),
-				template,
+			renderAlertTextFromString(preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'), '{nature}. {bogus}. in {city}.'),
+		).toBe('Sick Person. In Boone.');
+	});
+
+	it('does not substitute prototype-inherited names as tokens', () => {
+		// {toString}/{constructor} must not surface JS internals; they are unknown
+		// tokens and render as empty.
+		expect(
+			renderAlertTextFromString(
+				preAlert('SICK PERSON', '1704 HAWKEYE DR', 'BOONE'),
+				'{nature}. {toString}{constructor}. in {city}.',
 			),
-		).toBe(
-			'Hemorrhage. Nine one five west mamie eisenhower avenue. Nine one five west mamie eisenhower avenue. In Boone.',
-		);
+		).toBe('Sick Person. In Boone.');
+	});
+
+	it('does not treat periods inside a token value as sentence breaks', () => {
+		// The periods in "A.b.c." come from the {business} value, not the
+		// template's free text, so they must not split (and re-capitalize) the
+		// spoken sentence into "A. B. C. Towing".
+		expect(
+			renderAlertTextFromString(
+				preAlert('HEMORRHAGE', '915 8TH ST; A.B.C. TOWING', 'BOONE'),
+				'{nature}. {business}. in {city}.',
+			),
+		).toBe('Hemorrhage. A.b.c. Towing. In Boone.');
 	});
 });
 

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { getOrganization, getAlerts, fetchAlertAudio, ApiError } from './client'
+import {
+  getOrganization,
+  getAlerts,
+  fetchAlertAudio,
+  updateOrganizationSettings,
+  ApiError,
+} from './client'
 
 function mockFetch(response: Partial<Response> & { ok: boolean }) {
   const fetchMock = vi.fn().mockResolvedValue(response)
@@ -42,6 +48,53 @@ describe('getOrganization', () => {
       status: 401,
     })
     await expect(getOrganization('boone', 'wrong')).rejects.toBeInstanceOf(ApiError)
+  })
+})
+
+describe('updateOrganizationSettings', () => {
+  it('PUTs the settings with the bearer secret and JSON content type', async () => {
+    const settings = { default_city: 'Boone', default_state: 'IA', tts_template: '{nature}.' }
+    const org = { org_id: '1', org_key: 'boone', name: 'Boone FD', ...settings }
+    const fetchMock = mockFetch({ ok: true, json: async () => org } as Response)
+
+    const result = await updateOrganizationSettings('boone', 's3cret', settings)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/org/boone', {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer s3cret',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(settings),
+    })
+    expect(result).toEqual(org)
+  })
+
+  it('url-encodes the org key', async () => {
+    const fetchMock = mockFetch({ ok: true, json: async () => ({}) } as Response)
+
+    await updateOrganizationSettings('a b/c', 's3cret', {
+      default_city: null,
+      default_state: null,
+      tts_template: null,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/org/a%20b%2Fc',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+  })
+
+  it('throws ApiError carrying the status on failure', async () => {
+    mockFetch({ ok: false, status: 400 } as Response)
+
+    await expect(
+      updateOrganizationSettings('boone', 's3cret', {
+        default_city: null,
+        default_state: null,
+        tts_template: '{bogus}',
+      }),
+    ).rejects.toMatchObject({ name: 'ApiError', status: 400 })
   })
 })
 

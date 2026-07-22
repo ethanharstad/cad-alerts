@@ -1,4 +1,4 @@
-import type { Alert, PublicOrganization } from '../../shared/types'
+import type { Alert, PublicOrganization, OrgSettings } from '../../shared/types'
 
 const API_BASE = '/api'
 
@@ -29,12 +29,38 @@ async function getJson<T>(path: string, secret: string): Promise<T> {
   return (await response.json()) as T
 }
 
+/** PUT a JSON body to an authenticated endpoint and parse the JSON response. */
+async function putJson<T>(path: string, secret: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { ...authHeaders(secret), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, `Request failed with status ${response.status}`)
+  }
+  return (await response.json()) as T
+}
+
 /** Fetch a single organization by its public key. */
 export function getOrganization(
   organizationKey: string,
   secret: string,
 ): Promise<PublicOrganization> {
   return getJson<PublicOrganization>(`/org/${encodeURIComponent(organizationKey)}`, secret)
+}
+
+/** Update an organization's editable settings, returning the updated org. */
+export function updateOrganizationSettings(
+  organizationKey: string,
+  secret: string,
+  settings: OrgSettings,
+): Promise<PublicOrganization> {
+  return putJson<PublicOrganization>(
+    `/org/${encodeURIComponent(organizationKey)}`,
+    secret,
+    settings,
+  )
 }
 
 /** Fetch the most recent alerts for an organization. */

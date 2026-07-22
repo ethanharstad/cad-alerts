@@ -14,14 +14,35 @@ export interface Organization {
 	org_key: string
 	access_key: string
 	name: string
+	/** Default city used later for address disambiguation / mapping. */
+	default_city: string | null
+	/** Default state used later for address disambiguation / mapping. */
+	default_state: string | null
+	/**
+	 * The organization's token-based text-to-speech template (see
+	 * `shared/ttsTemplate.ts`). Null means fall back to the default template.
+	 */
+	tts_template: string | null
 }
 
 /**
  * The organization shape safe to return to clients. Omits `access_key`, which
  * is a shared secret used only for authentication and must never be sent back
- * in an API response.
+ * in an API response. The settings fields are included so the SPA can display
+ * and edit them.
  */
 export type PublicOrganization = Omit<Organization, 'access_key'>
+
+/**
+ * The editable organization-level settings, as sent to the settings write
+ * endpoint. Each field is nullable; a null clears the stored value (the app
+ * then falls back to its default).
+ */
+export interface OrgSettings {
+	default_city: string | null
+	default_state: string | null
+	tts_template: string | null
+}
 
 export interface Alert {
 	alert_id: string
