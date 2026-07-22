@@ -38,6 +38,11 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				.sort((a, b) => b.timestamp - a.timestamp)
 				.slice(0, limit);
 		},
+		async alertsSince(orgId, since) {
+			return rows
+				.filter((a) => a.organization === orgId && a.timestamp >= since)
+				.sort((a, b) => a.timestamp - b.timestamp);
+		},
 		async findAlert(orgId, alertId) {
 			return rows.find((a) => a.organization === orgId && a.alert_id === alertId);
 		},

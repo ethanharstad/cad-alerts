@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, and, gte } from 'drizzle-orm';
+import { eq, asc, desc, and, gte } from 'drizzle-orm';
 
 import { organizations, alerts } from './schema';
 import type { Organization, Alert, OrgSettings } from '../shared/types';
@@ -25,6 +25,15 @@ export interface AlertStore {
 	updateOrgSettings(orgId: string, settings: OrgSettings): Promise<void>;
 	/** The most recent `limit` alerts for an organization, newest first. */
 	latestAlerts(orgId: string, limit: number): Promise<Alert[]>;
+	/**
+	 * Alerts for an organization whose `timestamp` is at or after `since` (epoch
+	 * ms), oldest first. This is the tail query behind the SSE stream: the handler
+	 * advances a timestamp cursor and re-runs this to pick up newly-inserted
+	 * alerts. Oldest-first so events stream in the order they occurred; the `>=`
+	 * bound can return a same-millisecond boundary alert the client already has,
+	 * so clients deduplicate by `alert_id`.
+	 */
+	alertsSince(orgId: string, since: number): Promise<Alert[]>;
 	/**
 	 * A single alert scoped to its organization, or `undefined` when no alert
 	 * with that id belongs to the org.
@@ -89,6 +98,13 @@ export function createD1Store(d1: D1Database): AlertStore {
 				.where(eq(alerts.organization, orgId))
 				.orderBy(desc(alerts.timestamp))
 				.limit(limit);
+		},
+		async alertsSince(orgId, since) {
+			return db
+				.select()
+				.from(alerts)
+				.where(and(eq(alerts.organization, orgId), gte(alerts.timestamp, since)))
+				.orderBy(asc(alerts.timestamp));
 		},
 		async findAlert(orgId, alertId) {
 			const alert = await db

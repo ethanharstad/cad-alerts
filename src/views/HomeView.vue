@@ -2,8 +2,18 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
-import { getOrganization, getAlerts, fetchAlertAudio, ApiError } from '@/api/client'
+import {
+  getOrganization,
+  getAlerts,
+  fetchAlertAudio,
+  streamAlerts,
+  ApiError,
+  type AlertStreamHandle,
+  type StreamStatus,
+} from '@/api/client'
 import type { Alert, PublicOrganization } from '../../shared/types'
+
+const MAX_ALERTS = 5
 
 const settingsStore = useSettingsStore()
 const organization = ref<PublicOrganization | null>(null)
@@ -13,11 +23,13 @@ const error = ref<string | null>(null)
 const alerts = ref<Alert[]>([])
 const alertsError = ref<string | null>(null)
 const previousAlertIds = ref<Set<string>>(new Set())
+// Gate auto-play until the initial list has loaded, so opening the dashboard
+// never replays the current alerts as audio.
+const initialized = ref(false)
 
-const countdown = ref<number>(0)
+const streamStatus = ref<StreamStatus>('reconnecting')
 const isPaused = ref(false)
-let refreshTimer: ReturnType<typeof setInterval> | null = null
-let countdownTimer: ReturnType<typeof setInterval> | null = null
+let streamHandle: AlertStreamHandle | null = null
 
 const fetchOrganization = async () => {
   loading.value = true
@@ -57,23 +69,11 @@ const fetchAlerts = async () => {
       settingsStore.organizationSecret,
     )
 
-    // Check for new alerts and auto-play if enabled
-    if (settingsStore.autoPlayNewAlerts && previousAlertIds.value.size > 0 && newAlerts.length > 0) {
-      // Find alerts that weren't in the previous list
-      const newestAlert = newAlerts.find(alert => !previousAlertIds.value.has(alert.alert_id))
-
-      if (newestAlert && newestAlert.audio_url) {
-        // Play the newest alert
-        playAlert(newestAlert)
-      }
-    }
-
-    // Update alerts and track IDs
+    // Replace the current list. This is the initial load and the manual-refresh
+    // path; live updates arrive over the stream (see onStreamAlert), which owns
+    // auto-play. No auto-play here, so a refresh never re-speaks existing alerts.
     alerts.value = newAlerts
     previousAlertIds.value = new Set(newAlerts.map(alert => alert.alert_id))
-
-    // Reset countdown after successful fetch
-    resetCountdown()
   } catch (err) {
     if (err instanceof ApiError) {
       alertsError.value =
@@ -83,6 +83,24 @@ const fetchAlerts = async () => {
     } else {
       alertsError.value = err instanceof Error ? err.message : 'An error occurred'
     }
+  }
+}
+
+/**
+ * Merge one streamed alert into the list: dedup by id (the stream can replay a
+ * boundary alert on reconnect), keep newest-first, cap the list, and auto-play
+ * genuinely-new alerts once the initial load is done.
+ */
+const onStreamAlert = (alert: Alert) => {
+  const isNew = !previousAlertIds.value.has(alert.alert_id)
+
+  alerts.value = [alert, ...alerts.value.filter(a => a.alert_id !== alert.alert_id)]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, MAX_ALERTS)
+  previousAlertIds.value = new Set(alerts.value.map(a => a.alert_id))
+
+  if (isNew && initialized.value && settingsStore.autoPlayNewAlerts && alert.audio_url) {
+    playAlert(alert)
   }
 }
 
@@ -105,38 +123,26 @@ const playAlert = async (alert: Alert) => {
   }
 }
 
-const resetCountdown = () => {
-  countdown.value = settingsStore.refreshInterval
+const startStream = () => {
+  // Idempotent: never run two streams at once.
+  stopStream()
+  streamStatus.value = 'reconnecting'
+  streamHandle = streamAlerts(
+    settingsStore.organizationKey,
+    settingsStore.organizationSecret,
+    {
+      onAlert: onStreamAlert,
+      onStatus: (status) => {
+        streamStatus.value = status
+      },
+    },
+  )
 }
 
-const startRefreshTimer = () => {
-  // Clear any existing timers
-  stopRefreshTimer()
-
-  // Set initial countdown
-  resetCountdown()
-
-  // Start countdown timer (updates every second)
-  countdownTimer = setInterval(() => {
-    if (countdown.value > 0) {
-      countdown.value--
-    }
-  }, 1000)
-
-  // Start refresh timer
-  refreshTimer = setInterval(() => {
-    fetchAlerts()
-  }, settingsStore.refreshInterval * 1000)
-}
-
-const stopRefreshTimer = () => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-  if (countdownTimer) {
-    clearInterval(countdownTimer)
-    countdownTimer = null
+const stopStream = () => {
+  if (streamHandle) {
+    streamHandle.close()
+    streamHandle = null
   }
 }
 
@@ -144,33 +150,32 @@ const togglePause = () => {
   isPaused.value = !isPaused.value
 
   if (isPaused.value) {
-    // Pause: stop the timers
-    stopRefreshTimer()
+    // Pause: drop the live connection.
+    stopStream()
   } else {
-    // Unpause: restart the timers
-    startRefreshTimer()
+    // Resume: reconnect and pull a fresh snapshot to cover the paused gap.
+    fetchAlerts()
+    startStream()
   }
 }
 
 const manualRefresh = async () => {
   await fetchAlerts()
-  // If not paused, restart the timer to reset the interval
-  if (!isPaused.value) {
-    startRefreshTimer()
-  }
 }
 
 onMounted(() => {
   fetchOrganization().then(() => {
-    // Start auto-refresh after initial load
+    // Everything the initial load will show is now in `alerts`; from here on,
+    // stream arrivals are genuinely new and may auto-play.
+    initialized.value = true
     if (organization.value) {
-      startRefreshTimer()
+      startStream()
     }
   })
 })
 
 onUnmounted(() => {
-  stopRefreshTimer()
+  stopStream()
 })
 </script>
 
@@ -190,11 +195,12 @@ onUnmounted(() => {
         <div class="alerts-header">
           <h2>{{ organization.name }} - Alerts</h2>
           <div class="refresh-controls">
-            <div v-if="countdown > 0 && !isPaused" class="countdown">
-              Next refresh in {{ countdown }}s
-            </div>
             <div v-if="isPaused" class="paused-indicator">
-              Auto-refresh paused
+              Live updates paused
+            </div>
+            <div v-else class="stream-status" :class="streamStatus">
+              <span class="stream-dot" aria-hidden="true"></span>
+              {{ streamStatus === 'connected' ? 'Live' : 'Reconnecting…' }}
             </div>
             <button
               @click="manualRefresh"
@@ -206,7 +212,7 @@ onUnmounted(() => {
             <button
               @click="togglePause"
               class="btn-pause"
-              :title="isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+              :title="isPaused ? 'Resume live updates' : 'Pause live updates'"
             >
               {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
             </button>
@@ -328,7 +334,10 @@ h1 {
   flex-wrap: wrap;
 }
 
-.countdown {
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.875rem;
   color: var(--color-text-muted, #666);
   background: var(--color-background-soft);
@@ -336,6 +345,32 @@ h1 {
   border-radius: 4px;
   border: 1px solid var(--color-border);
   font-weight: 500;
+}
+
+.stream-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #adb5bd;
+}
+
+.stream-status.connected .stream-dot {
+  background: hsla(160, 100%, 37%, 1);
+}
+
+.stream-status.reconnecting .stream-dot {
+  background: #e0a800;
+  animation: stream-pulse 1s ease-in-out infinite;
+}
+
+@keyframes stream-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .paused-indicator {
@@ -406,10 +441,11 @@ h1 {
     flex-direction: column;
   }
 
-  .countdown,
+  .stream-status,
   .paused-indicator {
     width: 100%;
     text-align: center;
+    justify-content: center;
   }
 
   .btn-refresh,

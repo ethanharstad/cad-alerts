@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import { createApp } from './api'
 import { createInMemoryStore } from './store.fake'
-import type { Organization } from '../shared/types'
+import type { Alert, Organization } from '../shared/types'
 
 const orgRow: Organization = {
 	org_id: 'o1',
@@ -12,6 +12,22 @@ const orgRow: Organization = {
 	default_city: null,
 	default_state: null,
 	tts_template: null,
+}
+
+function alertRow(id: string, timestamp: number): Alert {
+	return {
+		alert_id: id,
+		organization: 'o1',
+		body: '',
+		audio_url: `${id}.mp3`,
+		timestamp,
+		source: '',
+		nature: '',
+		address: '',
+		city: '',
+		latitude: null,
+		longitude: null,
+	}
 }
 
 // Build the app against an in-memory store seeded with the given orgs. The store
@@ -86,6 +102,54 @@ describe('GET /api/org/:organizationKey/alerts authentication', () => {
 		)
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual([])
+	})
+})
+
+describe('GET /api/org/:organizationKey/alerts/stream', () => {
+	// Fast timing so the tail loop ends promptly and `res.text()` resolves.
+	const streamOpts = { pollMs: 2, maxMs: 20 }
+
+	function appWithAlerts(alerts: Alert[]) {
+		const store = createInMemoryStore({ orgs: [{ ...orgRow }], alerts })
+		return createApp(() => store, streamOpts)
+	}
+
+	it('returns 401 without a valid token', async () => {
+		const res = await appWithAlerts([]).request('/api/org/boone/alerts/stream', {}, env)
+		expect(res.status).toBe(401)
+	})
+
+	it('streams alerts at or after the Last-Event-ID cursor, and no earlier ones', async () => {
+		const app = appWithAlerts([alertRow('a', 100), alertRow('b', 300), alertRow('c', 200)])
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef', 'Last-Event-ID': '200' } },
+			env,
+		)
+		expect(res.status).toBe(200)
+		expect(res.headers.get('Content-Type')).toContain('text/event-stream')
+
+		const text = await res.text()
+		expect(text).toContain('"alert_id":"c"') // timestamp 200, at the cursor
+		expect(text).toContain('"alert_id":"b"') // timestamp 300, after the cursor
+		expect(text).not.toContain('"alert_id":"a"') // timestamp 100, before the cursor
+		// Each matching alert is emitted exactly once, not re-sent every tail.
+		expect(text.match(/event: alert/g)?.length).toBe(2)
+	})
+
+	it('on a fresh connection (no Last-Event-ID) does not replay pre-existing alerts', async () => {
+		const app = appWithAlerts([alertRow('old', 100)])
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+		expect(res.status).toBe(200)
+		const text = await res.text()
+		// Cursor starts at "now", so the historical alert is not streamed; only
+		// heartbeats flow.
+		expect(text).not.toContain('event: alert')
+		expect(text).toContain('event: ping')
 	})
 })
 
