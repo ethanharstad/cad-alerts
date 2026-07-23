@@ -4,7 +4,9 @@ import {
   getAlerts,
   fetchAlertAudio,
   updateOrganizationSettings,
+  createSSEParser,
   ApiError,
+  type SSEEvent,
 } from './client'
 
 function mockFetch(response: Partial<Response> & { ok: boolean }) {
@@ -109,6 +111,57 @@ describe('getAlerts', () => {
       headers: { Authorization: 'Bearer s3cret' },
     })
     expect(result).toEqual(alerts)
+  })
+})
+
+describe('createSSEParser', () => {
+  const collect = () => {
+    const events: SSEEvent[] = []
+    return { events, parser: createSSEParser((e) => events.push(e)) }
+  }
+
+  it('parses a complete frame with id, event and data', () => {
+    const { events, parser } = collect()
+    parser.feed('id: 300\nevent: alert\ndata: {"alert_id":"b"}\n\n')
+    expect(events).toEqual([{ id: '300', event: 'alert', data: '{"alert_id":"b"}' }])
+  })
+
+  it('reassembles a frame split across chunk boundaries', () => {
+    const { events, parser } = collect()
+    // Bytes can arrive mid-field or mid-frame; nothing emits until the blank line.
+    parser.feed('id: 1\neve')
+    parser.feed('nt: alert\nda')
+    parser.feed('ta: hello\n')
+    expect(events).toEqual([])
+    parser.feed('\n')
+    expect(events).toEqual([{ id: '1', event: 'alert', data: 'hello' }])
+  })
+
+  it('emits multiple frames delivered in one chunk', () => {
+    const { events, parser } = collect()
+    parser.feed('event: alert\ndata: one\n\nevent: alert\ndata: two\n\n')
+    expect(events.map((e) => e.data)).toEqual(['one', 'two'])
+  })
+
+  it('ignores heartbeat comment lines but keeps the frame separator', () => {
+    const { events, parser } = collect()
+    parser.feed(': keep-alive\n\n')
+    // A pure comment frame carries no field, so nothing is emitted.
+    expect(events).toEqual([])
+    parser.feed('event: ping\ndata: \n\n')
+    expect(events).toEqual([{ event: 'ping', data: '' }])
+  })
+
+  it('joins multiple data lines with newlines and strips one leading space', () => {
+    const { events, parser } = collect()
+    parser.feed('data: line1\ndata: line2\n\n')
+    expect(events).toEqual([{ data: 'line1\nline2' }])
+  })
+
+  it('normalizes CRLF line endings', () => {
+    const { events, parser } = collect()
+    parser.feed('event: alert\r\ndata: hi\r\n\r\n')
+    expect(events).toEqual([{ event: 'alert', data: 'hi' }])
   })
 })
 

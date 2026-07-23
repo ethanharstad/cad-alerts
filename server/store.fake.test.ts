@@ -73,6 +73,22 @@ describe('createInMemoryStore', () => {
 		expect(latest.map((a) => a.alert_id)).toEqual(['b', 'c'])
 	})
 
+	it('alertsSince returns alerts at or after the cursor, oldest first', async () => {
+		const store = createInMemoryStore({
+			alerts: [alert('a', 'o1', 100), alert('b', 'o1', 300), alert('c', 'o1', 200)],
+		})
+		// Inclusive lower bound: 200 includes 'c' (==200) and 'b' (300), excludes 'a'.
+		const since = await store.alertsSince('o1', 200)
+		expect(since.map((a) => a.alert_id)).toEqual(['c', 'b'])
+	})
+
+	it('alertsSince scopes by organization', async () => {
+		const store = createInMemoryStore({
+			alerts: [alert('a', 'o1', 100), alert('x', 'o2', 100)],
+		})
+		expect((await store.alertsSince('o1', 0)).map((a) => a.alert_id)).toEqual(['a'])
+	})
+
 	it('latestAlerts and findAlert scope by organization', async () => {
 		const store = createInMemoryStore({
 			alerts: [alert('a', 'o1', 100), alert('x', 'o2', 100)],

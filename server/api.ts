@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception';
 import { createMiddleware } from 'hono/factory';
+import { streamSSE } from 'hono/streaming';
 import { timingSafeEqual } from 'hono/utils/buffer';
 
 import type { Organization, PublicOrganization, OrgSettings } from '../shared/types';
@@ -10,13 +11,37 @@ import { validateTemplate } from '../shared/ttsTemplate';
 type Variables = { organization: Organization; store: AlertStore };
 
 /**
+ * Timing for the SSE alert stream. Split out so tests can drive the tail loop
+ * fast (tiny poll, short cap) instead of waiting real seconds.
+ * - `pollMs`: how often the stream handler re-tails the store for new alerts.
+ * - `maxMs`: how long a single connection is held before the handler returns
+ *   and the client reconnects — bounds per-request duration and keeps
+ *   connections fresh.
+ */
+export interface StreamOptions {
+	pollMs: number;
+	maxMs: number;
+}
+
+const DEFAULT_STREAM_OPTIONS: StreamOptions = {
+	pollMs: 3_000,
+	maxMs: 5 * 60_000,
+};
+
+/**
  * Build the Hono app around an Alert store. The store arrives through a
  * resolver — `(env) => AlertStore` — because a Worker's bindings (`env`) only
  * exist per request, so the D1-backed store cannot be built at module load.
  * Production wires `(env) => createD1Store(env.db)`; tests pass
  * `() => createInMemoryStore(...)` and never touch Drizzle.
+ *
+ * `streamOptions` tunes the SSE tail loop; production uses the defaults, tests
+ * pass small values so the stream ends quickly.
  */
-export function createApp(resolveStore: (env: Env) => AlertStore) {
+export function createApp(
+	resolveStore: (env: Env) => AlertStore,
+	streamOptions: StreamOptions = DEFAULT_STREAM_OPTIONS,
+) {
 	const app = new Hono<{ Bindings: Env; Variables: Variables }>().basePath('/api/');
 
 	// Resolve the request's store once and stash it for handlers and middleware.
@@ -112,6 +137,52 @@ export function createApp(resolveStore: (env: Env) => AlertStore) {
 		const organization = c.get('organization');
 		const alertsList = await c.get('store').latestAlerts(organization.org_id, 5);
 		return c.json(alertsList);
+	});
+
+	app.get('/org/:organizationKey/alerts/stream', requireOrgAuth, async (c) => {
+		const organization = c.get('organization');
+		const store = c.get('store');
+
+		// Resume point. The client echoes the last event id it saw as
+		// `Last-Event-ID` on reconnect; that id is the alert's `timestamp`, so we
+		// resume the tail from there and replay anything that landed during the
+		// gap. On a fresh connection there is no header, so we start from "now" and
+		// only stream alerts that arrive after connect — the current list is loaded
+		// separately via GET .../alerts.
+		const lastEventId = c.req.header('Last-Event-ID');
+		const parsed = lastEventId !== undefined ? Number(lastEventId) : NaN;
+		// Inclusive lower bound (epoch ms) for the next tail query.
+		let cursor = Number.isFinite(parsed) ? parsed : Date.now();
+
+		return streamSSE(c, async (stream) => {
+			const deadline = Date.now() + streamOptions.maxMs;
+
+			while (!stream.aborted && !stream.closed && Date.now() < deadline) {
+				const fresh = await store.alertsSince(organization.org_id, cursor);
+				for (const alert of fresh) {
+					await stream.writeSSE({
+						id: String(alert.timestamp),
+						event: 'alert',
+						data: JSON.stringify(alert),
+					});
+				}
+				if (fresh.length > 0) {
+					// Advance past the newest timestamp emitted so the next tail is
+					// strictly newer. A same-ms alert inserted after this point is
+					// still caught on the following tail (its timestamp equals the old
+					// max, which is < cursor now) — acceptable: the intake pipeline
+					// dedups within a window, and the client dedups by alert_id.
+					const newest = fresh.reduce((max, a) => Math.max(max, a.timestamp), cursor);
+					cursor = newest + 1;
+				}
+
+				// Heartbeat: keeps intermediaries from reaping an idle connection and
+				// lets the client notice a dead link between alerts.
+				await stream.writeSSE({ event: 'ping', data: '' });
+
+				await stream.sleep(streamOptions.pollMs);
+			}
+		});
 	});
 
 	app.get('/org/:organizationKey/alerts/:alertId/audio', requireOrgAuth, async (c) => {
