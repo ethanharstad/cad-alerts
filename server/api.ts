@@ -144,41 +144,61 @@ export function createApp(
 		const store = c.get('store');
 
 		// Resume point. The client echoes the last event id it saw as
-		// `Last-Event-ID` on reconnect; that id is the alert's `timestamp`, so we
+		// `Last-Event-ID` on reconnect; that id is the alert's `updated_at`, so we
 		// resume the tail from there and replay anything that landed during the
 		// gap. On a fresh connection there is no header, so we start from "now" and
-		// only stream alerts that arrive after connect — the current list is loaded
+		// only stream changes that arrive after connect — the current list is loaded
 		// separately via GET .../alerts.
-		const lastEventId = c.req.header('Last-Event-ID');
-		const parsed = lastEventId !== undefined ? Number(lastEventId) : NaN;
+		// An id is only a usable cursor if it parses as a positive epoch-ms
+		// timestamp. A blank or junk header (`Number('')` is 0, which is finite)
+		// must not fall through to 0 — that would replay the org's whole history.
+		const lastEventId = c.req.header('Last-Event-ID')?.trim();
+		const parsed = lastEventId ? Number(lastEventId) : NaN;
 		// Inclusive lower bound (epoch ms) for the next tail query.
-		let cursor = Number.isFinite(parsed) ? parsed : Date.now();
+		let cursor = Number.isFinite(parsed) && parsed > 0 ? parsed : Date.now();
 
 		return streamSSE(c, async (stream) => {
 			const deadline = Date.now() + streamOptions.maxMs;
+			// alert_ids already emitted at exactly `cursor`. The cursor is an
+			// `updated_at` and the tail is inclusive, so without this the boundary
+			// alerts would repeat on every pass. Holding the cursor *at* the newest
+			// change (rather than past it) is what lets a same-ms change written
+			// after this tail still be picked up on the next one.
+			let emittedAtCursor = new Set<string>();
 
 			while (!stream.aborted && !stream.closed && Date.now() < deadline) {
-				const fresh = await store.alertsSince(organization.org_id, cursor);
+				// Suppress only a row still sitting at the cursor it was sent at. A
+				// revision moves `updated_at` forward, so it falls outside this test
+				// and streams — matching on alert_id alone would strand it, since
+				// nothing else can advance the cursor past it.
+				const fresh = (await store.alertsSince(organization.org_id, cursor)).filter(
+					(a) => !(a.updated_at === cursor && emittedAtCursor.has(a.alert_id)),
+				);
 				for (const alert of fresh) {
 					await stream.writeSSE({
-						id: String(alert.timestamp),
+						id: String(alert.updated_at),
 						event: 'alert',
 						data: JSON.stringify(alert),
 					});
 				}
 				if (fresh.length > 0) {
-					// Advance past the newest timestamp emitted so the next tail is
-					// strictly newer. A same-ms alert inserted after this point is
-					// still caught on the following tail (its timestamp equals the old
-					// max, which is < cursor now) — acceptable: the intake pipeline
-					// dedups within a window, and the client dedups by alert_id.
-					const newest = fresh.reduce((max, a) => Math.max(max, a.timestamp), cursor);
-					cursor = newest + 1;
+					const newest = fresh.reduce((max, a) => Math.max(max, a.updated_at), cursor);
+					if (newest > cursor) {
+						cursor = newest;
+						emittedAtCursor = new Set();
+					}
+					for (const alert of fresh) {
+						if (alert.updated_at === cursor) emittedAtCursor.add(alert.alert_id);
+					}
 				}
 
 				// Heartbeat: keeps intermediaries from reaping an idle connection and
-				// lets the client notice a dead link between alerts.
-				await stream.writeSSE({ event: 'ping', data: '' });
+				// lets the client notice a dead link between alerts. It carries the
+				// cursor as its id so the client has a resume point from the first
+				// beat onwards — without one, `Last-Event-ID` stays unset until the
+				// first alert arrives and every reconnect before that restarts the
+				// tail at "now", losing whatever landed in the gap.
+				await stream.writeSSE({ id: String(cursor), event: 'ping', data: '' });
 
 				await stream.sleep(streamOptions.pollMs);
 			}

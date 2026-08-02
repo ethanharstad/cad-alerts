@@ -49,7 +49,13 @@ export interface Alert {
 	organization: string
 	body: string
 	audio_url: string
+	/** When the incident happened; orders the recent list. */
 	timestamp: number
+	/**
+	 * When the row last changed — equal to `timestamp` on insert, bumped when a
+	 * follow-up email revises the incident. The live stream cursors on this.
+	 */
+	updated_at: number
 	source: string
 	nature: string
 	address: string

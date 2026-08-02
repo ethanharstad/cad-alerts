@@ -40,8 +40,8 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 		},
 		async alertsSince(orgId, since) {
 			return rows
-				.filter((a) => a.organization === orgId && a.timestamp >= since)
-				.sort((a, b) => a.timestamp - b.timestamp);
+				.filter((a) => a.organization === orgId && a.updated_at >= since)
+				.sort((a, b) => a.updated_at - b.updated_at);
 		},
 		async findAlert(orgId, alertId) {
 			return rows.find((a) => a.organization === orgId && a.alert_id === alertId);
@@ -73,6 +73,7 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 					nature: alert.nature,
 					latitude: alert.latitude,
 					longitude: alert.longitude,
+					updated_at: alert.updated_at,
 				};
 			}
 		},

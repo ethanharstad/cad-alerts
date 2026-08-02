@@ -134,7 +134,14 @@ export interface AlertStreamHandle {
   close(): void
 }
 
-export type StreamStatus = 'connected' | 'reconnecting'
+/**
+ * `reconnecting` is a blip — the connection dropped and will be retried within
+ * seconds. `unavailable` means enough attempts have failed in a row that the
+ * stream should be treated as blocked (a proxy that strips `text/event-stream`,
+ * say) and the caller should degrade to polling. The stream keeps retrying
+ * either way, so `unavailable` can return to `connected` on its own.
+ */
+export type StreamStatus = 'connected' | 'reconnecting' | 'unavailable'
 
 export interface StreamCallbacks {
   /** Fires for each streamed alert (already JSON-parsed). */
@@ -142,6 +149,20 @@ export interface StreamCallbacks {
   /** Fires on connection state changes, for a UI indicator. */
   onStatus?: (status: StreamStatus) => void
 }
+
+/**
+ * Reconnect tuning. Production uses the defaults; tests pass small values so the
+ * retry loop runs without real waiting.
+ */
+export interface StreamOptions {
+  /** Consecutive failed attempts before the status turns `unavailable`. */
+  failureThreshold?: number
+  /** First reconnect delay in ms; doubles per failure up to a 30s ceiling. */
+  backoffMs?: number
+}
+
+const DEFAULT_STREAM_OPTIONS = { failureThreshold: 3, backoffMs: 1000 }
+const MAX_BACKOFF_MS = 30000
 
 /**
  * Subscribe to an organization's live alert stream.
@@ -152,19 +173,25 @@ export interface StreamCallbacks {
  * (see docs/adr/0001). Reconnection and `Last-Event-ID` resume are therefore
  * implemented here: the last event id seen is replayed on reconnect so an alert
  * that lands during a brief disconnect is not missed, and reconnect backoff is
- * capped exponential. Returns immediately; call `close()` to stop.
+ * capped exponential. After `failureThreshold` consecutive failures the status
+ * turns `unavailable`, the caller's cue to fall back to polling; retrying
+ * continues underneath, so a stream that recovers reports `connected` again.
+ * Returns immediately; call `close()` to stop.
  */
 export function streamAlerts(
   organizationKey: string,
   secret: string,
   callbacks: StreamCallbacks,
+  options: StreamOptions = {},
 ): AlertStreamHandle {
+  const { failureThreshold, backoffMs } = { ...DEFAULT_STREAM_OPTIONS, ...options }
   const controller = new AbortController()
   let closed = false
   let lastEventId: string | null = null
 
   const run = async () => {
-    let backoff = 1000
+    let backoff = backoffMs
+    let failures = 0
     const path = `/org/${encodeURIComponent(organizationKey)}/alerts/stream`
 
     while (!closed) {
@@ -180,10 +207,18 @@ export function streamAlerts(
           throw new ApiError(response.status, `Stream failed with status ${response.status}`)
         }
 
-        callbacks.onStatus?.('connected')
-        backoff = 1000
-
+        let sawFrame = false
         const parser = createSSEParser((event) => {
+          if (!sawFrame) {
+            sawFrame = true
+            // Connected means frames are flowing, not that the request returned
+            // 200 — an intermediary can accept the request and deliver nothing.
+            // Resetting the failure count here rather than above is what stops
+            // that case from looking healthy on every attempt.
+            callbacks.onStatus?.('connected')
+            failures = 0
+            backoff = backoffMs
+          }
           if (event.id) lastEventId = event.id
           if (event.event === 'alert' && event.data) {
             try {
@@ -201,12 +236,18 @@ export function streamAlerts(
           if (done) break
           parser.feed(decoder.decode(value, { stream: true }))
         }
-        // Clean end (server capped the connection) — reconnect promptly.
+        // Clean end. The server caps a healthy connection, but only after it has
+        // sent heartbeats — one that closes without a single frame is something
+        // between us and the Worker refusing the stream. Reconnecting promptly
+        // there would spin at full speed and never trip the threshold, so it is
+        // routed through the failure path instead.
+        if (!sawFrame) throw new Error('stream closed before delivering any events')
       } catch {
         if (closed || controller.signal.aborted) return
-        callbacks.onStatus?.('reconnecting')
+        failures += 1
+        callbacks.onStatus?.(failures >= failureThreshold ? 'unavailable' : 'reconnecting')
         await sleep(backoff)
-        backoff = Math.min(backoff * 2, 30000)
+        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
       }
     }
   }

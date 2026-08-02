@@ -20,6 +20,7 @@ function alert(id: string, orgId: string, timestamp: number, overrides: Partial<
 		body: '',
 		audio_url: `${id}.mp3`,
 		timestamp,
+		updated_at: timestamp,
 		source: '',
 		nature: '',
 		address: '',
@@ -80,6 +81,15 @@ describe('createInMemoryStore', () => {
 		// Inclusive lower bound: 200 includes 'c' (==200) and 'b' (300), excludes 'a'.
 		const since = await store.alertsSince('o1', 200)
 		expect(since.map((a) => a.alert_id)).toEqual(['c', 'b'])
+	})
+
+	it('alertsSince cursors on updated_at, so a revised alert resurfaces', async () => {
+		const store = createInMemoryStore({
+			// A revision: the incident happened at 100 and keeps that timestamp, but
+			// the row changed at 300.
+			alerts: [alert('revised', 'o1', 100, { updated_at: 300 })],
+		})
+		expect((await store.alertsSince('o1', 200)).map((a) => a.alert_id)).toEqual(['revised'])
 	})
 
 	it('alertsSince scopes by organization', async () => {
@@ -147,6 +157,7 @@ describe('createInMemoryStore', () => {
 		expect(updated).toMatchObject({
 			alert_id: 'a',
 			timestamp: 100, // preserved, not the 999 passed in
+			updated_at: 999, // written, so the change surfaces on the SSE tail
 			nature: 'CARDIAC ARREST',
 			body: 'new body',
 			audio_url: 'b.mp3',

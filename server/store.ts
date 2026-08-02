@@ -26,12 +26,14 @@ export interface AlertStore {
 	/** The most recent `limit` alerts for an organization, newest first. */
 	latestAlerts(orgId: string, limit: number): Promise<Alert[]>;
 	/**
-	 * Alerts for an organization whose `timestamp` is at or after `since` (epoch
-	 * ms), oldest first. This is the tail query behind the SSE stream: the handler
-	 * advances a timestamp cursor and re-runs this to pick up newly-inserted
-	 * alerts. Oldest-first so events stream in the order they occurred; the `>=`
-	 * bound can return a same-millisecond boundary alert the client already has,
-	 * so clients deduplicate by `alert_id`.
+	 * Alerts for an organization whose `updated_at` is at or after `since` (epoch
+	 * ms), oldest change first. This is the tail query behind the SSE stream: the
+	 * handler advances an `updated_at` cursor and re-runs this to pick up both
+	 * newly-inserted alerts and revisions to existing ones — which is why it
+	 * cursors on `updated_at` rather than `timestamp`, since a revised incident
+	 * deliberately keeps its original `timestamp`. The `>=` bound can return a
+	 * same-millisecond boundary alert the client already has, so clients
+	 * deduplicate by `alert_id`.
 	 */
 	alertsSince(orgId: string, since: number): Promise<Alert[]>;
 	/**
@@ -57,9 +59,10 @@ export interface AlertStore {
 	 * Refresh an existing incident's mutable details in place, matched by
 	 * `(organization, alert_id)`. Only the fields that change between emails for
 	 * the same incident are written (`body`, `audio_url`, `source`, `nature`,
-	 * `latitude`, `longitude`); `alert_id`, `timestamp`, `organization`,
-	 * `address`, and `city` are left untouched so the alert keeps its identity,
-	 * its position in the recent list, and its dedup match key.
+	 * `latitude`, `longitude`), plus `updated_at` so the change surfaces on the
+	 * SSE tail; `alert_id`, `timestamp`, `organization`, `address`, and `city` are
+	 * left untouched so the alert keeps its identity, its position in the recent
+	 * list, and its dedup match key.
 	 */
 	updateAlert(alert: Alert): Promise<void>;
 }
@@ -103,8 +106,8 @@ export function createD1Store(d1: D1Database): AlertStore {
 			return db
 				.select()
 				.from(alerts)
-				.where(and(eq(alerts.organization, orgId), gte(alerts.timestamp, since)))
-				.orderBy(asc(alerts.timestamp));
+				.where(and(eq(alerts.organization, orgId), gte(alerts.updated_at, since)))
+				.orderBy(asc(alerts.updated_at));
 		},
 		async findAlert(orgId, alertId) {
 			const alert = await db
@@ -142,6 +145,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					nature: alert.nature,
 					latitude: alert.latitude,
 					longitude: alert.longitude,
+					updated_at: alert.updated_at,
 				})
 				.where(and(
 					eq(alerts.organization, alert.organization),

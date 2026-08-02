@@ -21,6 +21,7 @@ function alertRow(id: string, timestamp: number): Alert {
 		body: '',
 		audio_url: `${id}.mp3`,
 		timestamp,
+		updated_at: timestamp,
 		source: '',
 		nature: '',
 		address: '',
@@ -150,6 +151,156 @@ describe('GET /api/org/:organizationKey/alerts/stream', () => {
 		// heartbeats flow.
 		expect(text).not.toContain('event: alert')
 		expect(text).toContain('event: ping')
+	})
+
+	// The id of the last frame of the given event type, or undefined when that
+	// type carried no id — mirrors how the client tracks `Last-Event-ID`.
+	function lastIdOf(text: string, eventType: string): string | undefined {
+		let id: string | undefined
+		for (const frame of text.split('\n\n')) {
+			const lines = frame.split('\n')
+			if (!lines.includes(`event: ${eventType}`)) continue
+			id = lines.find((l) => l.startsWith('id: '))?.slice('id: '.length)
+		}
+		return id
+	}
+
+	it('carries the cursor as the id on ping frames, so a reconnect before any alert has a resume point', async () => {
+		const before = Date.now()
+		const app = appWithAlerts([])
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+		const pingId = lastIdOf(await res.text(), 'ping')
+		// Without an id on the heartbeat the client's Last-Event-ID stays unset
+		// until the first alert, and every reconnect until then restarts at "now".
+		expect(pingId).toBeDefined()
+		expect(Number(pingId)).toBeGreaterThanOrEqual(before)
+	})
+
+	it('resumes from a ping id without losing an alert that landed in the gap', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...orgRow }] })
+		const app = createApp(() => store, streamOpts)
+
+		const first = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+		const pingId = lastIdOf(await first.text(), 'ping')!
+
+		// The connection is now down. An alert lands at the cursor itself — the
+		// tightest case, since the resumed tail's lower bound is inclusive.
+		await store.insertAlert(alertRow('gap', Number(pingId)))
+
+		const second = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef', 'Last-Event-ID': pingId } },
+			env,
+		)
+		expect(await second.text()).toContain('"alert_id":"gap"')
+	})
+
+	it('streams a revision to an alert it has already sent', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...orgRow }] })
+		// A longer cap than the other stream tests: this one drives two write →
+		// read round-trips, and the reader is cancelled explicitly at the end.
+		const app = createApp(() => store, { pollMs: 2, maxMs: 2000 })
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+
+		const reader = res.body!.getReader()
+		const decoder = new TextDecoder()
+		let text = ''
+		const readWhile = async (satisfied: () => boolean) => {
+			while (!satisfied()) {
+				const { value, done } = await reader.read()
+				if (done) return
+				text += decoder.decode(value, { stream: true })
+			}
+		}
+
+		// Take the cursor from the first heartbeat rather than from a local clock
+		// read — the handler sets it from its own `Date.now()`, so anything stamped
+		// earlier would fall before the tail's lower bound and never stream.
+		await readWhile(() => lastIdOf(text, 'ping') !== undefined)
+		const cursor = Number(lastIdOf(text, 'ping'))
+
+		await store.insertAlert({ ...alertRow('inc', cursor), nature: 'SICK PERSON' })
+		await readWhile(() => text.includes('"nature":"SICK PERSON"'))
+
+		// A follow-up email revises the incident. The alert keeps its original
+		// `timestamp` (it holds its place in the recent list), so only `updated_at`
+		// moves — which is exactly what the tail cursors on.
+		await store.updateAlert({
+			...alertRow('inc', cursor),
+			nature: 'CARDIAC ARREST',
+			updated_at: cursor + 1,
+		})
+		await readWhile(() => text.includes('"nature":"CARDIAC ARREST"'))
+		await reader.cancel()
+
+		expect(text).toContain('"nature":"CARDIAC ARREST"')
+		// Same alert, so the client merges it in place rather than adding a row.
+		expect(text.match(/"alert_id":"inc"/g)?.length).toBe(2)
+	})
+
+	it.each([
+		['an empty', ''],
+		['a whitespace', '  '],
+		['a non-numeric', 'not-a-timestamp'],
+		['a non-positive', '0'],
+	])('treats %s Last-Event-ID as a fresh connection, not a replay from 0', async (_label, id) => {
+		const app = appWithAlerts([alertRow('old', 100)])
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef', 'Last-Event-ID': id } },
+			env,
+		)
+		expect(res.status).toBe(200)
+		const text = await res.text()
+		// A cursor of 0 would dump the org's entire history down the stream.
+		expect(text).not.toContain('event: alert')
+	})
+
+	it('emits a same-millisecond alert inserted after it has already tailed that timestamp', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...orgRow }], alerts: [alertRow('b', 300)] })
+		const app = createApp(() => store, streamOpts)
+		const res = await app.request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef', 'Last-Event-ID': '300' } },
+			env,
+		)
+		expect(res.status).toBe(200)
+
+		// Read until the seeded alert has actually gone out, so the late insert is
+		// guaranteed to land on a *later* tail at the same timestamp — the case a
+		// cursor advanced past the newest timestamp would lose.
+		const reader = res.body!.getReader()
+		const decoder = new TextDecoder()
+		let text = ''
+		while (!text.includes('"alert_id":"b"')) {
+			const { value, done } = await reader.read()
+			if (done) break
+			text += decoder.decode(value, { stream: true })
+		}
+		expect(text).toContain('"alert_id":"b"')
+
+		await store.insertAlert(alertRow('b2', 300))
+
+		for (;;) {
+			const { value, done } = await reader.read()
+			if (done) break
+			text += decoder.decode(value, { stream: true })
+		}
+		expect(text).toContain('"alert_id":"b2"')
+		// The already-emitted boundary alert is not re-sent on every tail.
+		expect(text.match(/"alert_id":"b"/g)?.length).toBe(1)
 	})
 })
 

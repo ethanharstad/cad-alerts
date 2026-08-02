@@ -36,17 +36,21 @@
         </div>
 
         <div class="form-group">
-          <label for="refreshInterval">Refresh Interval (seconds)</label>
+          <label for="refreshInterval">Fallback Poll Interval (seconds)</label>
           <input
             id="refreshInterval"
             v-model.number="settingsStore.refreshInterval"
             type="number"
             min="5"
             max="300"
-            placeholder="Enter refresh interval"
+            placeholder="Enter fallback poll interval"
             required
           />
-          <p class="help-text">How often to check for new alerts (minimum 5 seconds, maximum 300 seconds)</p>
+          <p class="help-text">
+            Alerts normally arrive over a live connection. If that connection can't be
+            established, the dashboard checks for new alerts this often instead
+            (minimum 5 seconds, maximum 300 seconds).
+          </p>
         </div>
 
         <div class="form-group checkbox-group">
@@ -208,7 +212,7 @@ const saveSettings = async () => {
     return
   }
   if (settingsStore.refreshInterval < 5 || settingsStore.refreshInterval > 300) {
-    message.value = 'Refresh interval must be between 5 and 300 seconds'
+    message.value = 'Fallback poll interval must be between 5 and 300 seconds'
     messageType.value = 'error'
     return
   }
