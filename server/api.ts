@@ -7,6 +7,11 @@ import { timingSafeEqual } from 'hono/utils/buffer';
 import type { Organization, PublicOrganization, OrgSettings } from '../shared/types';
 import type { AlertStore } from './store';
 import { validateTemplate } from '../shared/ttsTemplate';
+import {
+	isValidActionableWindow,
+	MIN_ACTIONABLE_WINDOW_MINUTES,
+	MAX_ACTIONABLE_WINDOW_MINUTES,
+} from '../shared/actionableWindow';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -110,10 +115,21 @@ export function createApp(
 			throw new HTTPException(400, { message: 'Invalid JSON body' });
 		}
 
+		// A missing or null window means "use the default"; anything else must be a
+		// whole number of minutes in range, so a bad value is rejected here rather
+		// than silently muting or spamming a station's dashboards.
+		const window = body.actionable_window_minutes;
+		if (window !== undefined && window !== null && !isValidActionableWindow(window)) {
+			throw new HTTPException(400, {
+				message: `actionable_window_minutes must be a whole number between ${MIN_ACTIONABLE_WINDOW_MINUTES} and ${MAX_ACTIONABLE_WINDOW_MINUTES}`,
+			});
+		}
+
 		const settings: OrgSettings = {
 			default_city: normalize(body.default_city),
 			default_state: normalize(body.default_state),
 			tts_template: normalize(body.tts_template),
+			actionable_window_minutes: isValidActionableWindow(window) ? window : null,
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can

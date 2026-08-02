@@ -12,6 +12,7 @@ const orgRow: Organization = {
 	default_city: null,
 	default_state: null,
 	tts_template: null,
+	actionable_window_minutes: null,
 }
 
 function alertRow(id: string, timestamp: number): Alert {
@@ -75,6 +76,7 @@ describe('GET /api/org/:organizationKey authentication', () => {
 			default_city: null,
 			default_state: null,
 			tts_template: null,
+			actionable_window_minutes: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -343,6 +345,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			default_city: 'Boone',
 			default_state: 'IA',
 			tts_template: '{nature}. in {city}.',
+			actionable_window_minutes: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -371,13 +374,60 @@ describe('PUT /api/org/:organizationKey settings', () => {
 		expect(res.status).toBe(400)
 	})
 
+	it('stores an in-range actionable window', async () => {
+		const res = await put(
+			appWith([orgRow]),
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{ actionable_window_minutes: 10 },
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ actionable_window_minutes: 10 })
+	})
+
+	it.each([
+		['below the minimum', 0],
+		['above the maximum', 61],
+		['fractional', 2.5],
+		['not a number', '10'],
+	])('rejects an actionable window that is %s', async (_label, value) => {
+		const res = await put(
+			appWith([orgRow]),
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{ actionable_window_minutes: value },
+		)
+		// Rejected rather than coerced: a silently clamped window would mute or
+		// spam every dashboard in the organization.
+		expect(res.status).toBe(400)
+	})
+
+	it('clears the actionable window when omitted or null, falling back to the default', async () => {
+		const app = appWith([orgRow])
+		await put(app, 'boone', { Authorization: 'Bearer abcdef' }, { actionable_window_minutes: 10 })
+
+		const res = await put(
+			app,
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{ actionable_window_minutes: null },
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ actionable_window_minutes: null })
+	})
+
 	it('persists settings so a later GET reflects them', async () => {
 		const app = appWith([orgRow])
 		await put(
 			app,
 			'boone',
 			{ Authorization: 'Bearer abcdef' },
-			{ default_city: 'Ames', default_state: 'IA', tts_template: '{nature}.' },
+			{
+				default_city: 'Ames',
+				default_state: 'IA',
+				tts_template: '{nature}.',
+				actionable_window_minutes: 15,
+			},
 		)
 		const res = await app.request(
 			'/api/org/boone',
@@ -392,6 +442,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			default_city: 'Ames',
 			default_state: 'IA',
 			tts_template: '{nature}.',
+			actionable_window_minutes: 15,
 		})
 	})
 })

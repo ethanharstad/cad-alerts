@@ -134,10 +134,11 @@ explicit control over backoff and fallback.
   most one alert is ever waiting to be spoken, always the newest offered, dropped
   if it is stale. An alert already playing is allowed to finish rather than being
   cut off. In the steady state — one call at a time — this is simply "speak each
-  new alert"; the rule only bites on a burst or a backlog. The window defaults to
-  five minutes and is a per-dashboard setting ("Actionable Window", 1–60
-  minutes), since how long a call stays worth announcing is a matter of local
-  practice rather than something this decision can fix.
+  new alert"; the rule only bites on a burst or a backlog. How long a call stays
+  worth announcing is department practice rather than something this decision can
+  fix, so the window is an **organization** setting ("Actionable Window", 1–60
+  minutes) shared by every dashboard in the org, defaulting to five when unset.
+  Both ends validate it against the same rule in `shared/actionableWindow.ts`.
 - **Out of scope:** browser autoplay policy. A kiosk still needs a prior user
   gesture (or a Chrome launch flag) to play audio; this decision does not change
   that.

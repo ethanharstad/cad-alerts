@@ -91,6 +91,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					default_city: settings.default_city,
 					default_state: settings.default_state,
 					tts_template: settings.tts_template,
+					actionable_window_minutes: settings.actionable_window_minutes,
 				})
 				.where(eq(organizations.org_id, orgId));
 		},

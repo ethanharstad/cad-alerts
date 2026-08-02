@@ -57,7 +57,12 @@ describe('getOrganization', () => {
 
 describe('updateOrganizationSettings', () => {
   it('PUTs the settings with the bearer secret and JSON content type', async () => {
-    const settings = { default_city: 'Boone', default_state: 'IA', tts_template: '{nature}.' }
+    const settings = {
+      default_city: 'Boone',
+      default_state: 'IA',
+      tts_template: '{nature}.',
+      actionable_window_minutes: 10,
+    }
     const org = { org_id: '1', org_key: 'boone', name: 'Boone FD', ...settings }
     const fetchMock = mockFetch({ ok: true, json: async () => org } as Response)
 
@@ -81,6 +86,7 @@ describe('updateOrganizationSettings', () => {
       default_city: null,
       default_state: null,
       tts_template: null,
+      actionable_window_minutes: null,
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -97,6 +103,7 @@ describe('updateOrganizationSettings', () => {
         default_city: null,
         default_state: null,
         tts_template: '{bogus}',
+        actionable_window_minutes: null,
       }),
     ).rejects.toMatchObject({ name: 'ApiError', status: 400 })
   })

@@ -11,6 +11,7 @@ export const organizations = sqliteTable('organizations', {
 	default_city: text('default_city'),
 	default_state: text('default_state'),
 	tts_template: text('tts_template'),
+	actionable_window_minutes: integer('actionable_window_minutes'),
 }, (table) => ({
 	orgKeyIdx: index('idx_organization_key').on(table.org_key),
 }))

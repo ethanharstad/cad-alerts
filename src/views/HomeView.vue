@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
-import { createAlertAnnouncer } from '@/audio/announcer'
+import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
 import {
   getOrganization,
   getAlerts,
@@ -143,10 +143,14 @@ const playAlert = async (alert: Alert) => {
 
 // Only the latest alert is ever read out, and only while it is still actionable
 // — a pause that ends with three missed calls announces the most recent one, not
-// a recital of calls that have already been handled. The window is read per
-// alert, so changing it on the settings screen applies without a reload.
+// a recital of calls that have already been handled. The window is the
+// organization's, read per alert so a change picked up by a later org fetch
+// applies without a reload; null means the department never set one.
 const announcer = createAlertAnnouncer(playAlert, {
-  windowMs: () => settingsStore.actionableWindowMinutes * 60_000,
+  windowMs: () => {
+    const minutes = organization.value?.actionable_window_minutes
+    return minutes == null ? DEFAULT_ACTIONABLE_WINDOW_MS : minutes * 60_000
+  },
 })
 
 /**

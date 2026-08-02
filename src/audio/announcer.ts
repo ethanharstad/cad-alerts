@@ -1,13 +1,14 @@
 import type { Alert } from '../../shared/types'
 
+import { DEFAULT_ACTIONABLE_WINDOW_MINUTES } from '../../shared/actionableWindow'
+
 /**
- * How recent an alert must be to be worth announcing, when nothing else is
- * configured. Past this the call is no longer actionable — the crew has either
- * responded or the moment has passed — and reading it out only talks over
- * whatever is happening now. How long that is depends on the department, so the
- * dashboard passes its own value; this is only the fallback.
+ * How recent an alert must be to be worth announcing, when the organization has
+ * not set a window of its own. Past this the call is no longer actionable — the
+ * crew has either responded or the moment has passed — and reading it out only
+ * talks over whatever is happening now.
  */
-export const DEFAULT_ACTIONABLE_WINDOW_MS = 5 * 60 * 1000
+export const DEFAULT_ACTIONABLE_WINDOW_MS = DEFAULT_ACTIONABLE_WINDOW_MINUTES * 60_000
 
 export interface AnnouncerOptions {
 	/** The actionable window in ms, read afresh each time an alert is offered. */
