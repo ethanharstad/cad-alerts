@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, and, gte } from 'drizzle-orm';
+import { eq, asc, desc, and, gte } from 'drizzle-orm';
 
 import { organizations, alerts } from './schema';
 import type { Organization, Alert, OrgSettings } from '../shared/types';
@@ -26,6 +26,17 @@ export interface AlertStore {
 	/** The most recent `limit` alerts for an organization, newest first. */
 	latestAlerts(orgId: string, limit: number): Promise<Alert[]>;
 	/**
+	 * Alerts for an organization whose `updated_at` is at or after `since` (epoch
+	 * ms), oldest change first. This is the tail query behind the SSE stream: the
+	 * handler advances an `updated_at` cursor and re-runs this to pick up both
+	 * newly-inserted alerts and revisions to existing ones — which is why it
+	 * cursors on `updated_at` rather than `timestamp`, since a revised incident
+	 * deliberately keeps its original `timestamp`. The `>=` bound can return a
+	 * same-millisecond boundary alert the client already has, so clients
+	 * deduplicate by `alert_id`.
+	 */
+	alertsSince(orgId: string, since: number): Promise<Alert[]>;
+	/**
 	 * A single alert scoped to its organization, or `undefined` when no alert
 	 * with that id belongs to the org.
 	 */
@@ -48,9 +59,10 @@ export interface AlertStore {
 	 * Refresh an existing incident's mutable details in place, matched by
 	 * `(organization, alert_id)`. Only the fields that change between emails for
 	 * the same incident are written (`body`, `audio_url`, `source`, `nature`,
-	 * `latitude`, `longitude`); `alert_id`, `timestamp`, `organization`,
-	 * `address`, and `city` are left untouched so the alert keeps its identity,
-	 * its position in the recent list, and its dedup match key.
+	 * `latitude`, `longitude`), plus `updated_at` so the change surfaces on the
+	 * SSE tail; `alert_id`, `timestamp`, `organization`, `address`, and `city` are
+	 * left untouched so the alert keeps its identity, its position in the recent
+	 * list, and its dedup match key.
 	 */
 	updateAlert(alert: Alert): Promise<void>;
 }
@@ -79,6 +91,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					default_city: settings.default_city,
 					default_state: settings.default_state,
 					tts_template: settings.tts_template,
+					actionable_window_minutes: settings.actionable_window_minutes,
 				})
 				.where(eq(organizations.org_id, orgId));
 		},
@@ -89,6 +102,13 @@ export function createD1Store(d1: D1Database): AlertStore {
 				.where(eq(alerts.organization, orgId))
 				.orderBy(desc(alerts.timestamp))
 				.limit(limit);
+		},
+		async alertsSince(orgId, since) {
+			return db
+				.select()
+				.from(alerts)
+				.where(and(eq(alerts.organization, orgId), gte(alerts.updated_at, since)))
+				.orderBy(asc(alerts.updated_at));
 		},
 		async findAlert(orgId, alertId) {
 			const alert = await db
@@ -126,6 +146,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					nature: alert.nature,
 					latitude: alert.latitude,
 					longitude: alert.longitude,
+					updated_at: alert.updated_at,
 				})
 				.where(and(
 					eq(alerts.organization, alert.organization),

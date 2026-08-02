@@ -114,10 +114,12 @@ export async function processPreAlert(
 
 		if (match) {
 			// Refresh the incident's details but keep its id and original
-			// timestamp (so it holds its place in the recent list). The new
-			// email's audio was uploaded under a fresh key; the superseded
-			// object is left orphaned in R2 — cleanup is out of scope and the
-			// AudioStore is write-only by design.
+			// timestamp (so it holds its place in the recent list). `updated_at`
+			// does move, which is what carries the revision out to live
+			// listeners — the SSE tail cursors on it. The new email's audio was
+			// uploaded under a fresh key; the superseded object is left orphaned
+			// in R2 — cleanup is out of scope and the AudioStore is write-only
+			// by design.
 			await deps.store.updateAlert({
 				...match,
 				body: text,
@@ -126,6 +128,7 @@ export async function processPreAlert(
 				nature: preAlert.nature,
 				latitude: preAlert.latitude,
 				longitude: preAlert.longitude,
+				updated_at: now,
 			});
 			return;
 		}
@@ -136,6 +139,8 @@ export async function processPreAlert(
 			body: text,
 			audio_url: audioUrl,
 			timestamp: now,
+			// A fresh incident has never been revised, so the two clocks agree.
+			updated_at: now,
 			source: payload.emailText,
 			address: preAlert.address,
 			city: preAlert.city,

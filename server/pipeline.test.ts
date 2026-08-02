@@ -19,6 +19,7 @@ const org: Organization = {
 	default_city: null,
 	default_state: null,
 	tts_template: null,
+	actionable_window_minutes: null,
 }
 
 // A pre-alert email addressed to the org's key, with a well-formed body.
@@ -62,6 +63,7 @@ function seededAlert(overrides: Partial<Alert> = {}): Alert {
 		body: 'Sick Person. ...',
 		audio_url: 'inst-0.mp3',
 		timestamp: 1000,
+		updated_at: 1000,
 		source: 'SICK PERSON | 1704 HAWKEYE DR #APT 104:BOONE | 42.036800,-93.868018',
 		nature: 'SICK PERSON',
 		address: '1704 HAWKEYE DR #APT 104',
@@ -170,6 +172,7 @@ describe('processPreAlert', () => {
 		expect(alerts[0]).toMatchObject({
 			alert_id: 'inst-0', // preserved — not the new instance id
 			timestamp: 1000, // original first-seen time kept
+			updated_at: 1000 + 60_000, // moved, so live listeners see the revision
 			nature: 'CARDIAC ARREST', // refreshed to the latest email
 			body: 'Cardiac Arrest. ...',
 			audio_url: 'inst-1.mp3', // points at the new audio

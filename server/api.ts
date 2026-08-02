@@ -1,13 +1,37 @@
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception';
 import { createMiddleware } from 'hono/factory';
+import { streamSSE } from 'hono/streaming';
 import { timingSafeEqual } from 'hono/utils/buffer';
 
 import type { Organization, PublicOrganization, OrgSettings } from '../shared/types';
 import type { AlertStore } from './store';
 import { validateTemplate } from '../shared/ttsTemplate';
+import {
+	isValidActionableWindow,
+	MIN_ACTIONABLE_WINDOW_MINUTES,
+	MAX_ACTIONABLE_WINDOW_MINUTES,
+} from '../shared/actionableWindow';
 
 type Variables = { organization: Organization; store: AlertStore };
+
+/**
+ * Timing for the SSE alert stream. Split out so tests can drive the tail loop
+ * fast (tiny poll, short cap) instead of waiting real seconds.
+ * - `pollMs`: how often the stream handler re-tails the store for new alerts.
+ * - `maxMs`: how long a single connection is held before the handler returns
+ *   and the client reconnects — bounds per-request duration and keeps
+ *   connections fresh.
+ */
+export interface StreamOptions {
+	pollMs: number;
+	maxMs: number;
+}
+
+const DEFAULT_STREAM_OPTIONS: StreamOptions = {
+	pollMs: 3_000,
+	maxMs: 5 * 60_000,
+};
 
 /**
  * Build the Hono app around an Alert store. The store arrives through a
@@ -15,8 +39,14 @@ type Variables = { organization: Organization; store: AlertStore };
  * exist per request, so the D1-backed store cannot be built at module load.
  * Production wires `(env) => createD1Store(env.db)`; tests pass
  * `() => createInMemoryStore(...)` and never touch Drizzle.
+ *
+ * `streamOptions` tunes the SSE tail loop; production uses the defaults, tests
+ * pass small values so the stream ends quickly.
  */
-export function createApp(resolveStore: (env: Env) => AlertStore) {
+export function createApp(
+	resolveStore: (env: Env) => AlertStore,
+	streamOptions: StreamOptions = DEFAULT_STREAM_OPTIONS,
+) {
 	const app = new Hono<{ Bindings: Env; Variables: Variables }>().basePath('/api/');
 
 	// Resolve the request's store once and stash it for handlers and middleware.
@@ -85,10 +115,21 @@ export function createApp(resolveStore: (env: Env) => AlertStore) {
 			throw new HTTPException(400, { message: 'Invalid JSON body' });
 		}
 
+		// A missing or null window means "use the default"; anything else must be a
+		// whole number of minutes in range, so a bad value is rejected here rather
+		// than silently muting or spamming a station's dashboards.
+		const window = body.actionable_window_minutes;
+		if (window !== undefined && window !== null && !isValidActionableWindow(window)) {
+			throw new HTTPException(400, {
+				message: `actionable_window_minutes must be a whole number between ${MIN_ACTIONABLE_WINDOW_MINUTES} and ${MAX_ACTIONABLE_WINDOW_MINUTES}`,
+			});
+		}
+
 		const settings: OrgSettings = {
 			default_city: normalize(body.default_city),
 			default_state: normalize(body.default_state),
 			tts_template: normalize(body.tts_template),
+			actionable_window_minutes: isValidActionableWindow(window) ? window : null,
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can
@@ -112,6 +153,72 @@ export function createApp(resolveStore: (env: Env) => AlertStore) {
 		const organization = c.get('organization');
 		const alertsList = await c.get('store').latestAlerts(organization.org_id, 5);
 		return c.json(alertsList);
+	});
+
+	app.get('/org/:organizationKey/alerts/stream', requireOrgAuth, async (c) => {
+		const organization = c.get('organization');
+		const store = c.get('store');
+
+		// Resume point. The client echoes the last event id it saw as
+		// `Last-Event-ID` on reconnect; that id is the alert's `updated_at`, so we
+		// resume the tail from there and replay anything that landed during the
+		// gap. On a fresh connection there is no header, so we start from "now" and
+		// only stream changes that arrive after connect — the current list is loaded
+		// separately via GET .../alerts.
+		// An id is only a usable cursor if it parses as a positive epoch-ms
+		// timestamp. A blank or junk header (`Number('')` is 0, which is finite)
+		// must not fall through to 0 — that would replay the org's whole history.
+		const lastEventId = c.req.header('Last-Event-ID')?.trim();
+		const parsed = lastEventId ? Number(lastEventId) : NaN;
+		// Inclusive lower bound (epoch ms) for the next tail query.
+		let cursor = Number.isFinite(parsed) && parsed > 0 ? parsed : Date.now();
+
+		return streamSSE(c, async (stream) => {
+			const deadline = Date.now() + streamOptions.maxMs;
+			// alert_ids already emitted at exactly `cursor`. The cursor is an
+			// `updated_at` and the tail is inclusive, so without this the boundary
+			// alerts would repeat on every pass. Holding the cursor *at* the newest
+			// change (rather than past it) is what lets a same-ms change written
+			// after this tail still be picked up on the next one.
+			let emittedAtCursor = new Set<string>();
+
+			while (!stream.aborted && !stream.closed && Date.now() < deadline) {
+				// Suppress only a row still sitting at the cursor it was sent at. A
+				// revision moves `updated_at` forward, so it falls outside this test
+				// and streams — matching on alert_id alone would strand it, since
+				// nothing else can advance the cursor past it.
+				const fresh = (await store.alertsSince(organization.org_id, cursor)).filter(
+					(a) => !(a.updated_at === cursor && emittedAtCursor.has(a.alert_id)),
+				);
+				for (const alert of fresh) {
+					await stream.writeSSE({
+						id: String(alert.updated_at),
+						event: 'alert',
+						data: JSON.stringify(alert),
+					});
+				}
+				if (fresh.length > 0) {
+					const newest = fresh.reduce((max, a) => Math.max(max, a.updated_at), cursor);
+					if (newest > cursor) {
+						cursor = newest;
+						emittedAtCursor = new Set();
+					}
+					for (const alert of fresh) {
+						if (alert.updated_at === cursor) emittedAtCursor.add(alert.alert_id);
+					}
+				}
+
+				// Heartbeat: keeps intermediaries from reaping an idle connection and
+				// lets the client notice a dead link between alerts. It carries the
+				// cursor as its id so the client has a resume point from the first
+				// beat onwards — without one, `Last-Event-ID` stays unset until the
+				// first alert arrives and every reconnect before that restarts the
+				// tail at "now", losing whatever landed in the gap.
+				await stream.writeSSE({ id: String(cursor), event: 'ping', data: '' });
+
+				await stream.sleep(streamOptions.pollMs);
+			}
+		});
 	});
 
 	app.get('/org/:organizationKey/alerts/:alertId/audio', requireOrgAuth, async (c) => {

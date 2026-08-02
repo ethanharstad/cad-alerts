@@ -30,6 +30,7 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				org.default_city = settings.default_city;
 				org.default_state = settings.default_state;
 				org.tts_template = settings.tts_template;
+				org.actionable_window_minutes = settings.actionable_window_minutes;
 			}
 		},
 		async latestAlerts(orgId, limit) {
@@ -37,6 +38,11 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				.filter((a) => a.organization === orgId)
 				.sort((a, b) => b.timestamp - a.timestamp)
 				.slice(0, limit);
+		},
+		async alertsSince(orgId, since) {
+			return rows
+				.filter((a) => a.organization === orgId && a.updated_at >= since)
+				.sort((a, b) => a.updated_at - b.updated_at);
 		},
 		async findAlert(orgId, alertId) {
 			return rows.find((a) => a.organization === orgId && a.alert_id === alertId);
@@ -68,6 +74,7 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 					nature: alert.nature,
 					latitude: alert.latitude,
 					longitude: alert.longitude,
+					updated_at: alert.updated_at,
 				};
 			}
 		},

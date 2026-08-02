@@ -11,6 +11,7 @@ export const organizations = sqliteTable('organizations', {
 	default_city: text('default_city'),
 	default_state: text('default_state'),
 	tts_template: text('tts_template'),
+	actionable_window_minutes: integer('actionable_window_minutes'),
 }, (table) => ({
 	orgKeyIdx: index('idx_organization_key').on(table.org_key),
 }))
@@ -20,7 +21,12 @@ export const alerts = sqliteTable('alerts', {
 	organization: text('organization').notNull().references(() => organizations.org_id),
 	body: text('body').notNull(),
 	audio_url: text('audio_url').notNull(),
+	// When the incident happened: orders the recent list and is held fixed when a
+	// follow-up email revises the incident, so the alert keeps its place.
 	timestamp: integer('timestamp').notNull(),
+	// When the row last changed: equal to `timestamp` on insert, bumped on every
+	// update. The SSE tail cursors on this so revisions reach the stream too.
+	updated_at: integer('updated_at').notNull(),
 	source: text('source').notNull(),
 	address: text('address').notNull(),
 	city: text('city').notNull(),
@@ -29,6 +35,7 @@ export const alerts = sqliteTable('alerts', {
 	longitude: real('longitude'),
 }, (table) => ({
 	latestAlertsIdx: index('idx_latest_alerts_for_org').on(table.organization, desc(table.timestamp)),
+	updatedAlertsIdx: index('idx_alerts_updated_for_org').on(table.organization, table.updated_at),
 }))
 
 export type Organization = typeof organizations.$inferSelect

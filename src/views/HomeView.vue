@@ -1,9 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
-import { getOrganization, getAlerts, fetchAlertAudio, ApiError } from '@/api/client'
+import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
+import {
+  getOrganization,
+  getAlerts,
+  fetchAlertAudio,
+  streamAlerts,
+  ApiError,
+  type AlertStreamHandle,
+  type StreamStatus,
+} from '@/api/client'
 import type { Alert, PublicOrganization } from '../../shared/types'
+
+const MAX_ALERTS = 5
 
 const settingsStore = useSettingsStore()
 const organization = ref<PublicOrganization | null>(null)
@@ -13,11 +24,15 @@ const error = ref<string | null>(null)
 const alerts = ref<Alert[]>([])
 const alertsError = ref<string | null>(null)
 const previousAlertIds = ref<Set<string>>(new Set())
+// Gate auto-play until the initial list has loaded, so opening the dashboard
+// never replays the current alerts as audio.
+const initialized = ref(false)
 
-const countdown = ref<number>(0)
+const streamStatus = ref<StreamStatus>('reconnecting')
 const isPaused = ref(false)
-let refreshTimer: ReturnType<typeof setInterval> | null = null
-let countdownTimer: ReturnType<typeof setInterval> | null = null
+let streamHandle: AlertStreamHandle | null = null
+// The degraded path: only runs while the stream reports itself unavailable.
+let fallbackTimer: ReturnType<typeof setInterval> | null = null
 
 const fetchOrganization = async () => {
   loading.value = true
@@ -57,23 +72,11 @@ const fetchAlerts = async () => {
       settingsStore.organizationSecret,
     )
 
-    // Check for new alerts and auto-play if enabled
-    if (settingsStore.autoPlayNewAlerts && previousAlertIds.value.size > 0 && newAlerts.length > 0) {
-      // Find alerts that weren't in the previous list
-      const newestAlert = newAlerts.find(alert => !previousAlertIds.value.has(alert.alert_id))
-
-      if (newestAlert && newestAlert.audio_url) {
-        // Play the newest alert
-        playAlert(newestAlert)
-      }
-    }
-
-    // Update alerts and track IDs
+    // Replace the current list. This is the initial load and the manual-refresh
+    // path — both are "show me what is there now", so neither speaks. Anything
+    // that should be announced comes through onAlertArrived instead.
     alerts.value = newAlerts
     previousAlertIds.value = new Set(newAlerts.map(alert => alert.alert_id))
-
-    // Reset countdown after successful fetch
-    resetCountdown()
   } catch (err) {
     if (err instanceof ApiError) {
       alertsError.value =
@@ -86,6 +89,33 @@ const fetchAlerts = async () => {
   }
 }
 
+/**
+ * Merge one arriving alert into the list: dedup by id (the stream can replay a
+ * boundary alert on reconnect, and a revised incident arrives again under its
+ * existing id), keep newest-first, cap the list, and offer genuinely-new alerts
+ * to the announcer once the initial load is done. Every live path goes through
+ * here — the stream, the fallback poll, and the catch-up after a pause — so an
+ * alert is offered exactly once no matter which one delivered it. Whether it is
+ * actually spoken is the announcer's call.
+ */
+const onAlertArrived = (alert: Alert) => {
+  const isNew = !previousAlertIds.value.has(alert.alert_id)
+
+  alerts.value = [alert, ...alerts.value.filter(a => a.alert_id !== alert.alert_id)]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, MAX_ALERTS)
+  previousAlertIds.value = new Set(alerts.value.map(a => a.alert_id))
+
+  if (isNew && initialized.value && settingsStore.autoPlayNewAlerts && alert.audio_url) {
+    announcer.announce(alert)
+  }
+}
+
+/**
+ * Play one alert's audio, resolving when it has finished — the announcer relies
+ * on that to know when it may start another. A failure resolves too: a clip that
+ * won't play must not wedge the next one.
+ */
 const playAlert = async (alert: Alert) => {
   try {
     const audioUrl = await fetchAlertAudio(
@@ -94,83 +124,143 @@ const playAlert = async (alert: Alert) => {
       settingsStore.organizationSecret,
     )
     const audio = new Audio(audioUrl)
-    // Release the object URL once playback finishes (or fails to start).
-    audio.addEventListener('ended', () => URL.revokeObjectURL(audioUrl))
-    await audio.play().catch(err => {
+    try {
+      await new Promise<void>(resolve => {
+        audio.addEventListener('ended', () => resolve())
+        audio.addEventListener('error', () => resolve())
+        audio.play().catch(err => {
+          console.error('Failed to auto-play alert:', err)
+          resolve()
+        })
+      })
+    } finally {
       URL.revokeObjectURL(audioUrl)
-      console.error('Failed to auto-play alert:', err)
-    })
+    }
   } catch (err) {
     console.error('Failed to load alert audio:', err)
   }
 }
 
-const resetCountdown = () => {
-  countdown.value = settingsStore.refreshInterval
-}
+// Only the latest alert is ever read out, and only while it is still actionable
+// — a pause that ends with three missed calls announces the most recent one, not
+// a recital of calls that have already been handled. The window is the
+// organization's, read per alert so a change picked up by a later org fetch
+// applies without a reload; null means the department never set one.
+const announcer = createAlertAnnouncer(playAlert, {
+  windowMs: () => {
+    const minutes = organization.value?.actionable_window_minutes
+    return minutes == null ? DEFAULT_ACTIONABLE_WINDOW_MS : minutes * 60_000
+  },
+})
 
-const startRefreshTimer = () => {
-  // Clear any existing timers
-  stopRefreshTimer()
-
-  // Set initial countdown
-  resetCountdown()
-
-  // Start countdown timer (updates every second)
-  countdownTimer = setInterval(() => {
-    if (countdown.value > 0) {
-      countdown.value--
+/**
+ * Pull the current list and treat anything unseen as an arrival, rather than
+ * silently replacing what is on screen. Used wherever the live connection has a
+ * hole in it: the fallback poll's tick (docs/adr/0001 graceful degradation), and
+ * the moment a pause ends. Alerts that landed while nothing was listening are
+ * still news to the room, so they go through the arrival path — a kiosk that has
+ * quietly stopped speaking is not "still working". The announcer decides what a
+ * backlog actually sounds like: the newest call, and only if it is still live.
+ */
+const catchUp = async () => {
+  try {
+    const latest = await getAlerts(
+      settingsStore.organizationKey,
+      settingsStore.organizationSecret,
+    )
+    // Oldest first, so the newest is the last one offered to the announcer.
+    for (const alert of [...latest].sort((a, b) => a.timestamp - b.timestamp)) {
+      onAlertArrived(alert)
     }
-  }, 1000)
-
-  // Start refresh timer
-  refreshTimer = setInterval(() => {
-    fetchAlerts()
-  }, settingsStore.refreshInterval * 1000)
+  } catch {
+    // Leave the last-known list up; the next tick (or reconnect) tries again.
+  }
 }
 
-const stopRefreshTimer = () => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
+const startFallbackPoll = () => {
+  if (fallbackTimer) return
+  fallbackTimer = setInterval(catchUp, settingsStore.refreshInterval * 1000)
+  catchUp()
+}
+
+const stopFallbackPoll = () => {
+  if (fallbackTimer) {
+    clearInterval(fallbackTimer)
+    fallbackTimer = null
   }
-  if (countdownTimer) {
-    clearInterval(countdownTimer)
-    countdownTimer = null
+}
+
+const startStream = () => {
+  // Idempotent: never run two streams at once.
+  stopStream()
+  streamStatus.value = 'reconnecting'
+  streamHandle = streamAlerts(
+    settingsStore.organizationKey,
+    settingsStore.organizationSecret,
+    {
+      onAlert: onAlertArrived,
+      onStatus: (status) => {
+        streamStatus.value = status
+        // The stream keeps retrying underneath, so this flips back off by itself
+        // once it recovers.
+        if (status === 'unavailable') startFallbackPoll()
+        else stopFallbackPoll()
+      },
+    },
+  )
+}
+
+const stopStream = () => {
+  if (streamHandle) {
+    streamHandle.close()
+    streamHandle = null
   }
+  stopFallbackPoll()
 }
 
 const togglePause = () => {
   isPaused.value = !isPaused.value
 
   if (isPaused.value) {
-    // Pause: stop the timers
-    stopRefreshTimer()
+    // Pause: drop the live connection (and the fallback poll with it), and let
+    // go of anything still queued to be spoken — the operator asked for quiet.
+    stopStream()
+    announcer.clear()
   } else {
-    // Unpause: restart the timers
-    startRefreshTimer()
+    // Resume: reconnect first so the new stream's cursor is already running,
+    // then catch up on the gap. Anything that arrives in between reaches both,
+    // and the id dedup in onAlertArrived means it is still only spoken once.
+    startStream()
+    catchUp()
   }
 }
 
+const streamStatusLabel = computed(() => {
+  if (streamStatus.value === 'connected') return 'Live'
+  if (streamStatus.value === 'reconnecting') return 'Reconnecting…'
+  // Name the degraded mode rather than showing a permanent "Reconnecting…" —
+  // the dashboard is still updating, just on a slower clock.
+  return `Live updates unavailable — polling every ${settingsStore.refreshInterval}s`
+})
+
 const manualRefresh = async () => {
   await fetchAlerts()
-  // If not paused, restart the timer to reset the interval
-  if (!isPaused.value) {
-    startRefreshTimer()
-  }
 }
 
 onMounted(() => {
   fetchOrganization().then(() => {
-    // Start auto-refresh after initial load
+    // Everything the initial load will show is now in `alerts`; from here on,
+    // stream arrivals are genuinely new and may auto-play.
+    initialized.value = true
     if (organization.value) {
-      startRefreshTimer()
+      startStream()
     }
   })
 })
 
 onUnmounted(() => {
-  stopRefreshTimer()
+  stopStream()
+  announcer.clear()
 })
 </script>
 
@@ -190,11 +280,12 @@ onUnmounted(() => {
         <div class="alerts-header">
           <h2>{{ organization.name }} - Alerts</h2>
           <div class="refresh-controls">
-            <div v-if="countdown > 0 && !isPaused" class="countdown">
-              Next refresh in {{ countdown }}s
-            </div>
             <div v-if="isPaused" class="paused-indicator">
-              Auto-refresh paused
+              Live updates paused
+            </div>
+            <div v-else class="stream-status" :class="streamStatus">
+              <span class="stream-dot" aria-hidden="true"></span>
+              {{ streamStatusLabel }}
             </div>
             <button
               @click="manualRefresh"
@@ -206,7 +297,7 @@ onUnmounted(() => {
             <button
               @click="togglePause"
               class="btn-pause"
-              :title="isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+              :title="isPaused ? 'Resume live updates' : 'Pause live updates'"
             >
               {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
             </button>
@@ -328,7 +419,10 @@ h1 {
   flex-wrap: wrap;
 }
 
-.countdown {
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.875rem;
   color: var(--color-text-muted, #666);
   background: var(--color-background-soft);
@@ -336,6 +430,38 @@ h1 {
   border-radius: 4px;
   border: 1px solid var(--color-border);
   font-weight: 500;
+}
+
+.stream-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #adb5bd;
+}
+
+.stream-status.connected .stream-dot {
+  background: hsla(160, 100%, 37%, 1);
+}
+
+.stream-status.reconnecting .stream-dot {
+  background: #e0a800;
+  animation: stream-pulse 1s ease-in-out infinite;
+}
+
+/* Degraded but functioning: steady, not pulsing — this is a resting state, not
+   a transient one. */
+.stream-status.unavailable .stream-dot {
+  background: #d9534f;
+}
+
+@keyframes stream-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .paused-indicator {
@@ -406,10 +532,11 @@ h1 {
     flex-direction: column;
   }
 
-  .countdown,
+  .stream-status,
   .paused-indicator {
     width: 100%;
     text-align: center;
+    justify-content: center;
   }
 
   .btn-refresh,

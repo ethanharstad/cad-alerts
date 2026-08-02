@@ -23,6 +23,12 @@ export interface Organization {
 	 * `shared/ttsTemplate.ts`). Null means fall back to the default template.
 	 */
 	tts_template: string | null
+	/**
+	 * How recent a call must be, in minutes, for a dashboard to read it out loud.
+	 * Past it the call is no longer actionable and announcing it would talk over
+	 * whatever is happening now. Null means fall back to the default window.
+	 */
+	actionable_window_minutes: number | null
 }
 
 /**
@@ -42,6 +48,7 @@ export interface OrgSettings {
 	default_city: string | null
 	default_state: string | null
 	tts_template: string | null
+	actionable_window_minutes: number | null
 }
 
 export interface Alert {
@@ -49,7 +56,13 @@ export interface Alert {
 	organization: string
 	body: string
 	audio_url: string
+	/** When the incident happened; orders the recent list. */
 	timestamp: number
+	/**
+	 * When the row last changed — equal to `timestamp` on insert, bumped when a
+	 * follow-up email revises the incident. The live stream cursors on this.
+	 */
+	updated_at: number
 	source: string
 	nature: string
 	address: string

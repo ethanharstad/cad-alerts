@@ -11,6 +11,7 @@ const org: Organization = {
 	default_city: null,
 	default_state: null,
 	tts_template: null,
+	actionable_window_minutes: null,
 }
 
 function alert(id: string, orgId: string, timestamp: number, overrides: Partial<Alert> = {}): Alert {
@@ -20,6 +21,7 @@ function alert(id: string, orgId: string, timestamp: number, overrides: Partial<
 		body: '',
 		audio_url: `${id}.mp3`,
 		timestamp,
+		updated_at: timestamp,
 		source: '',
 		nature: '',
 		address: '',
@@ -46,12 +48,14 @@ describe('createInMemoryStore', () => {
 			default_city: 'Ames',
 			default_state: 'IA',
 			tts_template: '{nature}.',
+			actionable_window_minutes: 10,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({
 			org_id: 'o1',
 			default_city: 'Ames',
 			default_state: 'IA',
 			tts_template: '{nature}.',
+			actionable_window_minutes: 10,
 		})
 	})
 
@@ -61,6 +65,7 @@ describe('createInMemoryStore', () => {
 			default_city: 'Ames',
 			default_state: 'IA',
 			tts_template: '{nature}.',
+			actionable_window_minutes: 10,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({ default_city: null })
 	})
@@ -71,6 +76,31 @@ describe('createInMemoryStore', () => {
 		})
 		const latest = await store.latestAlerts('o1', 2)
 		expect(latest.map((a) => a.alert_id)).toEqual(['b', 'c'])
+	})
+
+	it('alertsSince returns alerts at or after the cursor, oldest first', async () => {
+		const store = createInMemoryStore({
+			alerts: [alert('a', 'o1', 100), alert('b', 'o1', 300), alert('c', 'o1', 200)],
+		})
+		// Inclusive lower bound: 200 includes 'c' (==200) and 'b' (300), excludes 'a'.
+		const since = await store.alertsSince('o1', 200)
+		expect(since.map((a) => a.alert_id)).toEqual(['c', 'b'])
+	})
+
+	it('alertsSince cursors on updated_at, so a revised alert resurfaces', async () => {
+		const store = createInMemoryStore({
+			// A revision: the incident happened at 100 and keeps that timestamp, but
+			// the row changed at 300.
+			alerts: [alert('revised', 'o1', 100, { updated_at: 300 })],
+		})
+		expect((await store.alertsSince('o1', 200)).map((a) => a.alert_id)).toEqual(['revised'])
+	})
+
+	it('alertsSince scopes by organization', async () => {
+		const store = createInMemoryStore({
+			alerts: [alert('a', 'o1', 100), alert('x', 'o2', 100)],
+		})
+		expect((await store.alertsSince('o1', 0)).map((a) => a.alert_id)).toEqual(['a'])
 	})
 
 	it('latestAlerts and findAlert scope by organization', async () => {
@@ -131,6 +161,7 @@ describe('createInMemoryStore', () => {
 		expect(updated).toMatchObject({
 			alert_id: 'a',
 			timestamp: 100, // preserved, not the 999 passed in
+			updated_at: 999, // written, so the change surfaces on the SSE tail
 			nature: 'CARDIAC ARREST',
 			body: 'new body',
 			audio_url: 'b.mp3',

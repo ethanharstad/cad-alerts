@@ -36,17 +36,21 @@
         </div>
 
         <div class="form-group">
-          <label for="refreshInterval">Refresh Interval (seconds)</label>
+          <label for="refreshInterval">Fallback Poll Interval (seconds)</label>
           <input
             id="refreshInterval"
             v-model.number="settingsStore.refreshInterval"
             type="number"
             min="5"
             max="300"
-            placeholder="Enter refresh interval"
+            placeholder="Enter fallback poll interval"
             required
           />
-          <p class="help-text">How often to check for new alerts (minimum 5 seconds, maximum 300 seconds)</p>
+          <p class="help-text">
+            Alerts normally arrive over a live connection. If that connection can't be
+            established, the dashboard checks for new alerts this often instead
+            (minimum 5 seconds, maximum 300 seconds).
+          </p>
         </div>
 
         <div class="form-group checkbox-group">
@@ -60,6 +64,7 @@
           </label>
           <p class="help-text">Automatically play audio for the newest alert when it arrives</p>
         </div>
+
 
         <div class="button-group">
           <button type="submit" class="btn-primary" :disabled="saving">
@@ -107,6 +112,27 @@
               placeholder="e.g. IA"
             />
             <p class="help-text">Paired with the default city for address disambiguation.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="actionableWindow">Actionable Window (minutes)</label>
+            <input
+              id="actionableWindow"
+              v-model="actionableWindow"
+              type="number"
+              :min="MIN_ACTIONABLE_WINDOW_MINUTES"
+              :max="MAX_ACTIONABLE_WINDOW_MINUTES"
+              :placeholder="`Default: ${DEFAULT_ACTIONABLE_WINDOW_MINUTES}`"
+            />
+            <p class="help-text">
+              How recent a call must be for a dashboard to read it out loud. Older
+              alerts still appear in the list but are not announced — the crew has
+              already responded, and speaking them talks over whatever is happening
+              now. Leave blank to use the default of
+              {{ DEFAULT_ACTIONABLE_WINDOW_MINUTES }} minutes
+              ({{ MIN_ACTIONABLE_WINDOW_MINUTES }}–{{ MAX_ACTIONABLE_WINDOW_MINUTES }}
+              minutes).
+            </p>
           </div>
 
           <div class="form-group">
@@ -191,6 +217,12 @@ import {
   parseTemplate,
   validateTemplate,
 } from '../../shared/ttsTemplate'
+import {
+  isValidActionableWindow,
+  DEFAULT_ACTIONABLE_WINDOW_MINUTES,
+  MIN_ACTIONABLE_WINDOW_MINUTES,
+  MAX_ACTIONABLE_WINDOW_MINUTES,
+} from '../../shared/actionableWindow'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
@@ -208,7 +240,7 @@ const saveSettings = async () => {
     return
   }
   if (settingsStore.refreshInterval < 5 || settingsStore.refreshInterval > 300) {
-    message.value = 'Refresh interval must be between 5 and 300 seconds'
+    message.value = 'Fallback poll interval must be between 5 and 300 seconds'
     messageType.value = 'error'
     return
   }
@@ -253,6 +285,9 @@ const saveSettings = async () => {
 const defaultCity = ref<string>('')
 const defaultState = ref<string>('')
 const ttsTemplate = ref<string>('')
+// Held as the raw input string so blank stays distinguishable from a number —
+// blank means "no organization value, use the default".
+const actionableWindow = ref<string>('')
 
 const orgLoading = ref<boolean>(false)
 // The organization key whose settings currently populate the fields below, so we
@@ -275,6 +310,8 @@ const applyOrg = (org: PublicOrganization) => {
   defaultCity.value = org.default_city ?? ''
   defaultState.value = org.default_state ?? ''
   ttsTemplate.value = org.tts_template ?? ''
+  actionableWindow.value =
+    org.actionable_window_minutes == null ? '' : String(org.actionable_window_minutes)
   loadedKey.value = org.org_key
 }
 
@@ -332,6 +369,16 @@ const saveOrgSettings = async () => {
     }
   }
 
+  // Blank clears the organization's window; anything else must pass the same
+  // check the API applies, so a bad value is caught before the round trip.
+  const trimmedWindow = actionableWindow.value.trim()
+  const windowMinutes = trimmedWindow === '' ? null : Number(trimmedWindow)
+  if (windowMinutes !== null && !isValidActionableWindow(windowMinutes)) {
+    orgMessage.value = `Actionable window must be a whole number between ${MIN_ACTIONABLE_WINDOW_MINUTES} and ${MAX_ACTIONABLE_WINDOW_MINUTES} minutes`
+    orgMessageType.value = 'error'
+    return
+  }
+
   orgSaving.value = true
   orgMessage.value = ''
   try {
@@ -342,6 +389,7 @@ const saveOrgSettings = async () => {
         default_city: defaultCity.value.trim() || null,
         default_state: defaultState.value.trim() || null,
         tts_template: trimmedTemplate || null,
+        actionable_window_minutes: windowMinutes,
       },
     )
     applyOrg(org)
