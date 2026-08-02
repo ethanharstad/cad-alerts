@@ -128,13 +128,16 @@ explicit control over backoff and fallback.
   an alert nobody has heard yet is offered regardless of which path delivered it,
   and the `alert_id` dedup means it is offered only once. The initial load and
   the manual Refresh button stay silent — both are "show me what is there now".
-- **Only the latest alert is read out, and only within five minutes.** A backlog
-  is not a playlist: past that window the call has been handled or the moment has
-  passed, and reading it talks over whatever is happening now. So at most one
-  alert is ever waiting to be spoken, always the newest offered, dropped if it is
-  stale. An alert already playing is allowed to finish rather than being cut off.
-  In the steady state — one call at a time — this is simply "speak each new
-  alert"; the rule only bites on a burst or a backlog.
+- **Only the latest alert is read out, and only while it is still actionable.** A
+  backlog is not a playlist: past that window the call has been handled or the
+  moment has passed, and reading it talks over whatever is happening now. So at
+  most one alert is ever waiting to be spoken, always the newest offered, dropped
+  if it is stale. An alert already playing is allowed to finish rather than being
+  cut off. In the steady state — one call at a time — this is simply "speak each
+  new alert"; the rule only bites on a burst or a backlog. The window defaults to
+  five minutes and is a per-dashboard setting ("Actionable Window", 1–60
+  minutes), since how long a call stays worth announcing is a matter of local
+  practice rather than something this decision can fix.
 - **Out of scope:** browser autoplay policy. A kiosk still needs a prior user
   gesture (or a Chrome launch flag) to play audio; this decision does not change
   that.

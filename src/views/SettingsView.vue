@@ -65,6 +65,25 @@
           <p class="help-text">Automatically play audio for the newest alert when it arrives</p>
         </div>
 
+        <div class="form-group">
+          <label for="actionableWindowMinutes">Actionable Window (minutes)</label>
+          <input
+            id="actionableWindowMinutes"
+            v-model.number="settingsStore.actionableWindowMinutes"
+            type="number"
+            min="1"
+            max="60"
+            placeholder="Enter actionable window"
+            required
+          />
+          <p class="help-text">
+            How recent a call must be to be read out. Older alerts still appear in the
+            list but are not announced — the crew has already responded, and speaking
+            them talks over whatever is happening now (minimum 1 minute, maximum 60
+            minutes).
+          </p>
+        </div>
+
         <div class="button-group">
           <button type="submit" class="btn-primary" :disabled="saving">
             {{ saving ? 'Verifying…' : 'Save Settings' }}
@@ -208,6 +227,14 @@ const hasCredentials = computed(
 const saveSettings = async () => {
   if (!settingsStore.organizationKey || !settingsStore.organizationSecret) {
     message.value = 'Please fill in all required fields'
+    messageType.value = 'error'
+    return
+  }
+  if (
+    settingsStore.actionableWindowMinutes < 1 ||
+    settingsStore.actionableWindowMinutes > 60
+  ) {
+    message.value = 'Actionable window must be between 1 and 60 minutes'
     messageType.value = 'error'
     return
   }

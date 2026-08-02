@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { createAlertAnnouncer, ACTIONABLE_WINDOW_MS } from './announcer'
+import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from './announcer'
 import type { Alert } from '../../shared/types'
 
 const NOW = 1_000_000_000
@@ -41,8 +41,9 @@ function controllableSpeaker() {
 	return { spoken, speak, finishOne }
 }
 
+// Fixed clock, default window — the shape most tests want.
 const announcerAt = (speak: (a: Alert) => Promise<void>) =>
-	createAlertAnnouncer(speak, () => NOW)
+	createAlertAnnouncer(speak, { now: () => NOW })
 
 describe('createAlertAnnouncer', () => {
 	it('speaks a fresh alert', async () => {
@@ -53,14 +54,47 @@ describe('createAlertAnnouncer', () => {
 
 	it('skips an alert older than the actionable window', () => {
 		const { spoken, speak } = controllableSpeaker()
-		announcerAt(speak).announce(alert('stale', NOW - ACTIONABLE_WINDOW_MS - 1))
+		announcerAt(speak).announce(alert('stale', NOW - DEFAULT_ACTIONABLE_WINDOW_MS - 1))
 		expect(spoken).toEqual([])
 	})
 
 	it('speaks an alert right at the edge of the window', () => {
 		const { spoken, speak } = controllableSpeaker()
-		announcerAt(speak).announce(alert('edge', NOW - ACTIONABLE_WINDOW_MS))
+		announcerAt(speak).announce(alert('edge', NOW - DEFAULT_ACTIONABLE_WINDOW_MS))
 		expect(spoken).toEqual(['edge'])
+	})
+
+	it('honours a configured window instead of the default', () => {
+		const { spoken, speak } = controllableSpeaker()
+		const announcer = createAlertAnnouncer(speak, {
+			now: () => NOW,
+			windowMs: () => 60_000, // one minute
+		})
+
+		// Two minutes old: inside the five-minute default, outside this one.
+		announcer.announce(alert('older', NOW - 120_000))
+		expect(spoken).toEqual([])
+
+		announcer.announce(alert('recent', NOW - 30_000))
+		expect(spoken).toEqual(['recent'])
+	})
+
+	it('re-reads the window per alert, so a setting change applies at once', () => {
+		const { spoken, speak } = controllableSpeaker()
+		let windowMinutes = 1
+		const announcer = createAlertAnnouncer(speak, {
+			now: () => NOW,
+			windowMs: () => windowMinutes * 60_000,
+		})
+
+		announcer.announce(alert('a', NOW - 120_000))
+		expect(spoken).toEqual([])
+
+		// The operator widens the window; the next alert is judged by the new one
+		// without the dashboard being reloaded.
+		windowMinutes = 5
+		announcer.announce(alert('b', NOW - 120_000))
+		expect(spoken).toEqual(['b'])
 	})
 
 	it('speaks only the newest of a backlog offered at once', async () => {
@@ -111,7 +145,7 @@ describe('createAlertAnnouncer', () => {
 		const announcer = createAlertAnnouncer(async (a) => {
 			attempted.push(a.alert_id)
 			if (a.alert_id === 'bad') throw new Error('audio fetch failed')
-		}, () => NOW)
+		}, { now: () => NOW })
 
 		announcer.announce(alert('bad'))
 		await new Promise((resolve) => setTimeout(resolve, 0))

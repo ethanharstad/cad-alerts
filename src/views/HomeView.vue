@@ -143,8 +143,11 @@ const playAlert = async (alert: Alert) => {
 
 // Only the latest alert is ever read out, and only while it is still actionable
 // — a pause that ends with three missed calls announces the most recent one, not
-// a recital of calls that have already been handled.
-const announcer = createAlertAnnouncer(playAlert)
+// a recital of calls that have already been handled. The window is read per
+// alert, so changing it on the settings screen applies without a reload.
+const announcer = createAlertAnnouncer(playAlert, {
+  windowMs: () => settingsStore.actionableWindowMinutes * 60_000,
+})
 
 /**
  * Pull the current list and treat anything unseen as an arrival, rather than

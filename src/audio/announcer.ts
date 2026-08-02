@@ -1,11 +1,20 @@
 import type { Alert } from '../../shared/types'
 
 /**
- * How recent an alert must be to be worth announcing. Past this the call is no
- * longer actionable — the crew has either responded or the moment has passed —
- * and reading it out only talks over whatever is happening now.
+ * How recent an alert must be to be worth announcing, when nothing else is
+ * configured. Past this the call is no longer actionable — the crew has either
+ * responded or the moment has passed — and reading it out only talks over
+ * whatever is happening now. How long that is depends on the department, so the
+ * dashboard passes its own value; this is only the fallback.
  */
-export const ACTIONABLE_WINDOW_MS = 5 * 60 * 1000
+export const DEFAULT_ACTIONABLE_WINDOW_MS = 5 * 60 * 1000
+
+export interface AnnouncerOptions {
+	/** The actionable window in ms, read afresh each time an alert is offered. */
+	windowMs?: () => number
+	/** Injectable clock, so tests need not wait. */
+	now?: () => number
+}
 
 /**
  * Announces the latest actionable alert, and only that one.
@@ -15,7 +24,7 @@ export const ACTIONABLE_WINDOW_MS = 5 * 60 * 1000
  * all out is wrong twice over: they would overlap, and most of them describe
  * calls that have already been handled. So at most one alert is ever waiting to
  * be spoken, always the newest offered, and it is dropped if it is older than
- * {@link ACTIONABLE_WINDOW_MS}.
+ * the actionable window (see {@link DEFAULT_ACTIONABLE_WINDOW_MS}).
  *
  * An alert already being spoken is left to finish — there is no way to un-hear
  * it, and cutting it off mid-word is worse than letting it end.
@@ -25,8 +34,10 @@ export const ACTIONABLE_WINDOW_MS = 5 * 60 * 1000
  */
 export function createAlertAnnouncer(
 	speak: (alert: Alert) => Promise<void>,
-	now: () => number = () => Date.now(),
+	options: AnnouncerOptions = {},
 ) {
+	const now = options.now ?? (() => Date.now())
+	const windowMs = options.windowMs ?? (() => DEFAULT_ACTIONABLE_WINDOW_MS)
 	let pending: Alert | null = null
 	let speaking = false
 
@@ -57,7 +68,7 @@ export function createAlertAnnouncer(
 		 * newer one, whatever order they arrive in.
 		 */
 		announce(alert: Alert) {
-			if (now() - alert.timestamp > ACTIONABLE_WINDOW_MS) return
+			if (now() - alert.timestamp > windowMs()) return
 			if (pending && pending.timestamp > alert.timestamp) return
 			pending = alert
 			void drain()
