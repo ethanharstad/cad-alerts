@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAlertAudio } from '@/api/client'
+import { applyOutputDevice } from '@/audio/outputDevice'
 import type { Alert } from '../../shared/types'
 
 interface Props {
@@ -40,6 +41,12 @@ onMounted(async () => {
   }
 })
 
+// Manual replays go to the same output as announced alerts.
+const audioEl = ref<HTMLAudioElement | null>(null)
+watchEffect(() => {
+  if (audioEl.value) void applyOutputDevice(audioEl.value, settingsStore.audioOutputDeviceId)
+})
+
 onUnmounted(() => {
   if (audioUrl.value) {
     URL.revokeObjectURL(audioUrl.value)
@@ -58,7 +65,7 @@ onUnmounted(() => {
       <p>{{  alert.city }}</p>
     </div>
     <div v-if="audioUrl" class="alert-audio">
-      <audio controls :src="audioUrl">
+      <audio ref="audioEl" controls :src="audioUrl">
         Your browser does not support the audio element.
       </audio>
     </div>
