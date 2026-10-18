@@ -29,6 +29,21 @@ export interface Organization {
 	 * whatever is happening now. Null means fall back to the default window.
 	 */
 	actionable_window_minutes: number | null
+	/**
+	 * Id of the built-in tone played before an alert outside quiet hours (see
+	 * `shared/alertTones.ts`). Null means no tone.
+	 */
+	alert_tone: string | null
+	/** Id of the tone played during quiet hours. Null means no tone. */
+	quiet_alert_tone: string | null
+	/**
+	 * Start of quiet hours, in minutes after the dashboard's local midnight.
+	 * Set together with `quiet_hours_end`; both null means no quiet hours. A
+	 * window whose end is before its start wraps past midnight.
+	 */
+	quiet_hours_start: number | null
+	/** End of quiet hours (exclusive), in minutes after local midnight. */
+	quiet_hours_end: number | null
 }
 
 /**
@@ -49,6 +64,10 @@ export interface OrgSettings {
 	default_state: string | null
 	tts_template: string | null
 	actionable_window_minutes: number | null
+	alert_tone: string | null
+	quiet_alert_tone: string | null
+	quiet_hours_start: number | null
+	quiet_hours_end: number | null
 }
 
 export interface Alert {

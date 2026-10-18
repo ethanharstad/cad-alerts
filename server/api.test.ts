@@ -13,6 +13,10 @@ const orgRow: Organization = {
 	default_state: null,
 	tts_template: null,
 	actionable_window_minutes: null,
+	alert_tone: null,
+	quiet_alert_tone: null,
+	quiet_hours_start: null,
+	quiet_hours_end: null,
 }
 
 function alertRow(id: string, timestamp: number): Alert {
@@ -77,6 +81,10 @@ describe('GET /api/org/:organizationKey authentication', () => {
 			default_state: null,
 			tts_template: null,
 			actionable_window_minutes: null,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -346,6 +354,10 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			default_state: 'IA',
 			tts_template: '{nature}. in {city}.',
 			actionable_window_minutes: null,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -416,6 +428,58 @@ describe('PUT /api/org/:organizationKey settings', () => {
 		expect(await res.json()).toMatchObject({ actionable_window_minutes: null })
 	})
 
+	it('stores alert tones and quiet hours', async () => {
+		const res = await put(
+			appWith([orgRow]),
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{
+				alert_tone: 'burst-fade',
+				quiet_alert_tone: 'purvis-soft',
+				quiet_hours_start: 22 * 60,
+				quiet_hours_end: 6 * 60,
+			},
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			alert_tone: 'burst-fade',
+			quiet_alert_tone: 'purvis-soft',
+			quiet_hours_start: 1320,
+			quiet_hours_end: 360,
+		})
+	})
+
+	it('clears tones and quiet hours when omitted', async () => {
+		const app = appWith([orgRow])
+		await put(app, 'boone', { Authorization: 'Bearer abcdef' }, {
+			alert_tone: 'burst-fade',
+			quiet_hours_start: 1320,
+			quiet_hours_end: 360,
+		})
+		const res = await put(app, 'boone', { Authorization: 'Bearer abcdef' }, {})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
+		})
+	})
+
+	it.each([
+		['an unknown alert tone', { alert_tone: 'klaxon' }],
+		['an unknown quiet tone', { quiet_alert_tone: 'klaxon' }],
+		['only a quiet-hours start', { quiet_hours_start: 1320 }],
+		['only a quiet-hours end', { quiet_hours_end: 360 }],
+		['a quiet-hours bound past midnight', { quiet_hours_start: 1320, quiet_hours_end: 1440 }],
+		['a fractional quiet-hours bound', { quiet_hours_start: 1320.5, quiet_hours_end: 360 }],
+		['a string quiet-hours bound', { quiet_hours_start: '22:00', quiet_hours_end: 360 }],
+		['an empty quiet-hours window', { quiet_hours_start: 360, quiet_hours_end: 360 }],
+	])('rejects %s', async (_label, body) => {
+		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, body)
+		expect(res.status).toBe(400)
+	})
+
 	it('persists settings so a later GET reflects them', async () => {
 		const app = appWith([orgRow])
 		await put(
@@ -427,6 +491,10 @@ describe('PUT /api/org/:organizationKey settings', () => {
 				default_state: 'IA',
 				tts_template: '{nature}.',
 				actionable_window_minutes: 15,
+				alert_tone: null,
+				quiet_alert_tone: null,
+				quiet_hours_start: null,
+				quiet_hours_end: null,
 			},
 		)
 		const res = await app.request(
@@ -443,6 +511,10 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			default_state: 'IA',
 			tts_template: '{nature}.',
 			actionable_window_minutes: 15,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 	})
 })

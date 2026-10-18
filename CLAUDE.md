@@ -25,6 +25,11 @@ organization through an authenticated API.
     the `email` handler when a message subject contains "pre-alert".
   - `server/parse.ts` — parses the pipe-delimited CAD email body.
   - `server/prompts.ts` — OpenAI prompt/instruction strings.
+- **Alert tones** (`shared/alertTones.ts`): built-in tones (audio in
+  `public/tones/`, served as static assets) that dashboards play before an
+  alert, plus per-org quiet hours with their own tone. Orgs store only tone ids;
+  to add a tone, drop the file in `public/tones/` and register it in
+  `ALERT_TONES` (never rename an id in use).
 - **Shared** (`shared/types.ts`): API contract types shared by frontend and
   backend. `server/schema.ts` has a compile-time guard asserting Drizzle row
   types stay assignable to these — keep them in lockstep.

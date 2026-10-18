@@ -20,6 +20,10 @@ const org: Organization = {
 	default_state: null,
 	tts_template: null,
 	actionable_window_minutes: null,
+	alert_tone: null,
+	quiet_alert_tone: null,
+	quiet_hours_start: null,
+	quiet_hours_end: null,
 }
 
 // A pre-alert email addressed to the org's key, with a well-formed body.

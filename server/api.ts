@@ -12,6 +12,7 @@ import {
 	MIN_ACTIONABLE_WINDOW_MINUTES,
 	MAX_ACTIONABLE_WINDOW_MINUTES,
 } from '../shared/actionableWindow';
+import { isValidToneId, isValidMinuteOfDay } from '../shared/alertTones';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -125,11 +126,39 @@ export function createApp(
 			});
 		}
 
+		// Tones are built in, so a stored id must name one; null plays no tone.
+		const alertTone = normalize(body.alert_tone);
+		const quietAlertTone = normalize(body.quiet_alert_tone);
+		for (const [field, tone] of [['alert_tone', alertTone], ['quiet_alert_tone', quietAlertTone]] as const) {
+			if (tone !== null && !isValidToneId(tone)) {
+				throw new HTTPException(400, { message: `Unknown ${field}: ${tone}` });
+			}
+		}
+
+		// Quiet hours are both-or-neither: a window with one open end has no
+		// meaning, and a zero-length one would never apply.
+		const quietStart = body.quiet_hours_start ?? null;
+		const quietEnd = body.quiet_hours_end ?? null;
+		if (quietStart !== null || quietEnd !== null) {
+			if (!isValidMinuteOfDay(quietStart) || !isValidMinuteOfDay(quietEnd)) {
+				throw new HTTPException(400, {
+					message: 'quiet_hours_start and quiet_hours_end must both be set, as whole minutes after midnight (0–1439)',
+				});
+			}
+			if (quietStart === quietEnd) {
+				throw new HTTPException(400, { message: 'Quiet hours must start and end at different times' });
+			}
+		}
+
 		const settings: OrgSettings = {
 			default_city: normalize(body.default_city),
 			default_state: normalize(body.default_state),
 			tts_template: normalize(body.tts_template),
 			actionable_window_minutes: isValidActionableWindow(window) ? window : null,
+			alert_tone: alertTone,
+			quiet_alert_tone: quietAlertTone,
+			quiet_hours_start: quietStart as number | null,
+			quiet_hours_end: quietEnd as number | null,
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can

@@ -92,6 +92,10 @@ export function createD1Store(d1: D1Database): AlertStore {
 					default_state: settings.default_state,
 					tts_template: settings.tts_template,
 					actionable_window_minutes: settings.actionable_window_minutes,
+					alert_tone: settings.alert_tone,
+					quiet_alert_tone: settings.quiet_alert_tone,
+					quiet_hours_start: settings.quiet_hours_start,
+					quiet_hours_end: settings.quiet_hours_end,
 				})
 				.where(eq(organizations.org_id, orgId));
 		},

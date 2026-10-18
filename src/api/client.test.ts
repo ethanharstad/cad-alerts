@@ -62,6 +62,10 @@ describe('updateOrganizationSettings', () => {
       default_state: 'IA',
       tts_template: '{nature}.',
       actionable_window_minutes: 10,
+      alert_tone: null,
+      quiet_alert_tone: null,
+      quiet_hours_start: null,
+      quiet_hours_end: null,
     }
     const org = { org_id: '1', org_key: 'boone', name: 'Boone FD', ...settings }
     const fetchMock = mockFetch({ ok: true, json: async () => org } as Response)
@@ -87,6 +91,10 @@ describe('updateOrganizationSettings', () => {
       default_state: null,
       tts_template: null,
       actionable_window_minutes: null,
+      alert_tone: null,
+      quiet_alert_tone: null,
+      quiet_hours_start: null,
+      quiet_hours_end: null,
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -104,6 +112,10 @@ describe('updateOrganizationSettings', () => {
         default_state: null,
         tts_template: '{bogus}',
         actionable_window_minutes: null,
+        alert_tone: null,
+        quiet_alert_tone: null,
+        quiet_hours_start: null,
+        quiet_hours_end: null,
       }),
     ).rejects.toMatchObject({ name: 'ApiError', status: 400 })
   })

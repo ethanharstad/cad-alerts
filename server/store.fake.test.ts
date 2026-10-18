@@ -12,6 +12,10 @@ const org: Organization = {
 	default_state: null,
 	tts_template: null,
 	actionable_window_minutes: null,
+	alert_tone: null,
+	quiet_alert_tone: null,
+	quiet_hours_start: null,
+	quiet_hours_end: null,
 }
 
 function alert(id: string, orgId: string, timestamp: number, overrides: Partial<Alert> = {}): Alert {
@@ -49,6 +53,10 @@ describe('createInMemoryStore', () => {
 			default_state: 'IA',
 			tts_template: '{nature}.',
 			actionable_window_minutes: 10,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({
 			org_id: 'o1',
@@ -56,6 +64,10 @@ describe('createInMemoryStore', () => {
 			default_state: 'IA',
 			tts_template: '{nature}.',
 			actionable_window_minutes: 10,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 	})
 
@@ -66,6 +78,10 @@ describe('createInMemoryStore', () => {
 			default_state: 'IA',
 			tts_template: '{nature}.',
 			actionable_window_minutes: 10,
+			alert_tone: null,
+			quiet_alert_tone: null,
+			quiet_hours_start: null,
+			quiet_hours_end: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({ default_city: null })
 	})

@@ -12,6 +12,12 @@ export const organizations = sqliteTable('organizations', {
 	default_state: text('default_state'),
 	tts_template: text('tts_template'),
 	actionable_window_minutes: integer('actionable_window_minutes'),
+	// Built-in alert tone ids (see shared/alertTones.ts); null plays no tone.
+	alert_tone: text('alert_tone'),
+	quiet_alert_tone: text('quiet_alert_tone'),
+	// Quiet hours as minutes after local midnight; both null means none.
+	quiet_hours_start: integer('quiet_hours_start'),
+	quiet_hours_end: integer('quiet_hours_end'),
 }, (table) => ({
 	orgKeyIdx: index('idx_organization_key').on(table.org_key),
 }))
