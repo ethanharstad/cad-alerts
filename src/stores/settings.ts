@@ -11,6 +11,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const organizationSecret = persisted('organizationSecret', '')
   const refreshInterval = persisted('refreshInterval', DEFAULT_REFRESH_INTERVAL)
   const autoPlayNewAlerts = persisted('autoPlayNewAlerts', false)
+  // Optional output-device override; '' plays on the system default. The label
+  // is kept so a device that is unplugged can still be named in the UI.
+  const audioOutputDeviceId = persisted('audioOutputDeviceId', '')
+  const audioOutputDeviceLabel = persisted('audioOutputDeviceLabel', '')
 
   // Reset to defaults; the persistence watch writes the defaults back, so a
   // reload reads them again.
@@ -19,6 +23,8 @@ export const useSettingsStore = defineStore('settings', () => {
     organizationSecret.value = ''
     refreshInterval.value = DEFAULT_REFRESH_INTERVAL
     autoPlayNewAlerts.value = false
+    audioOutputDeviceId.value = ''
+    audioOutputDeviceLabel.value = ''
   }
 
   return {
@@ -26,6 +32,8 @@ export const useSettingsStore = defineStore('settings', () => {
     organizationSecret,
     refreshInterval,
     autoPlayNewAlerts,
+    audioOutputDeviceId,
+    audioOutputDeviceLabel,
     clearSettings,
   }
 })

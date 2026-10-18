@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
 import { playClip } from '@/audio/play'
+import { resolveOutputDevice } from '@/audio/outputDevice'
 import {
   getOrganization,
   getAlerts,
@@ -35,6 +36,27 @@ const isPaused = ref(false)
 let streamHandle: AlertStreamHandle | null = null
 // The degraded path: only runs while the stream reports itself unavailable.
 let fallbackTimer: ReturnType<typeof setInterval> | null = null
+
+// Set when the chosen output device is known to be missing, so the dashboard
+// says alerts are on the system default instead of failing quietly.
+const outputDeviceMissing = ref(false)
+
+const checkOutputDevice = async () => {
+  const resolved = await resolveOutputDevice(
+    settingsStore.audioOutputDeviceId,
+    settingsStore.audioOutputDeviceLabel,
+  )
+  // Re-issued id for the same device: keep following it.
+  if (resolved) settingsStore.audioOutputDeviceId = resolved
+  outputDeviceMissing.value = resolved === null
+}
+
+const playOptions = () => ({
+  deviceId: settingsStore.audioOutputDeviceId,
+  onDeviceUnavailable: () => {
+    outputDeviceMissing.value = true
+  },
+})
 
 const fetchOrganization = async () => {
   loading.value = true
@@ -130,8 +152,8 @@ const playAlert = async (alert: Alert) => {
     )
     try {
       const tone = organization.value ? selectTone(organization.value, new Date()) : undefined
-      if (tone) await playClip(tone.url)
-      await playClip(audioUrl)
+      if (tone) await playClip(tone.url, playOptions())
+      await playClip(audioUrl, playOptions())
     } finally {
       URL.revokeObjectURL(audioUrl)
     }
@@ -247,6 +269,8 @@ const manualRefresh = async () => {
 }
 
 onMounted(() => {
+  void checkOutputDevice()
+  navigator.mediaDevices?.addEventListener('devicechange', checkOutputDevice)
   fetchOrganization().then(() => {
     // Everything the initial load will show is now in `alerts`; from here on,
     // stream arrivals are genuinely new and may auto-play.
@@ -258,6 +282,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  navigator.mediaDevices?.removeEventListener('devicechange', checkOutputDevice)
   stopStream()
   announcer.clear()
 })
@@ -301,6 +326,15 @@ onUnmounted(() => {
               {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
             </button>
           </div>
+        </div>
+
+        <div v-if="outputDeviceMissing" class="status-message warning">
+          <p>
+            The alert audio output
+            <strong>{{ settingsStore.audioOutputDeviceLabel || 'chosen in Settings' }}</strong>
+            isn't available, so alerts are playing on the system default. Reconnect it or
+            choose another in <RouterLink to="/settings">Settings</RouterLink>.
+          </p>
         </div>
 
         <div v-if="alertsError" class="status-message error">
@@ -351,6 +385,13 @@ h1 {
   background: #f8d7da;
   color: #721c24;
   border: 1px solid #f5c6cb;
+}
+
+.status-message.warning {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+  margin-bottom: 1rem;
 }
 
 .status-message p {

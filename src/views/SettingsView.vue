@@ -65,6 +65,52 @@
           <p class="help-text">Automatically play audio for the newest alert when it arrives</p>
         </div>
 
+        <div class="form-group">
+          <label for="audioOutputDevice">Audio Output</label>
+          <template v-if="outputSelectionSupported">
+            <div class="tone-row">
+              <select
+                id="audioOutputDevice"
+                :value="settingsStore.audioOutputDeviceId"
+                @change="selectOutputDevice(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">System default</option>
+                <option v-for="device in outputDevices" :key="device.deviceId" :value="device.deviceId">
+                  {{ device.label }}
+                </option>
+                <option v-if="savedDeviceMissing" :value="settingsStore.audioOutputDeviceId">
+                  {{ settingsStore.audioOutputDeviceLabel || 'Saved device' }} (not found)
+                </option>
+              </select>
+              <button type="button" class="btn-secondary btn-preview" @click="testOutputDevice">
+                ▶ Test
+              </button>
+            </div>
+            <button
+              v-if="outputDevices.length === 0"
+              type="button"
+              class="link-button"
+              @click="findOutputDevices"
+            >
+              Find output devices
+            </button>
+            <p v-if="outputDeviceMessage" class="help-text template-error">
+              {{ outputDeviceMessage }}
+            </p>
+            <p class="help-text">
+              Optional. Leave on System default to follow this computer's sound settings,
+              or pick a device to send alerts there regardless of the system default.
+              This applies to this browser only. To list devices, the browser asks for
+              microphone access; nothing is recorded. If the device is missing, alerts
+              play on the system default.
+            </p>
+          </template>
+          <p v-else class="help-text">
+            This browser can't choose an audio output, so alerts play on the system default.
+            Change it in this computer's sound settings.
+          </p>
+        </div>
+
 
         <div class="button-group">
           <button type="submit" class="btn-primary" :disabled="saving">
@@ -297,6 +343,13 @@ import {
   formatTimeOfDay,
 } from '../../shared/alertTones'
 import { playClip } from '@/audio/play'
+import {
+  supportsOutputSelection,
+  listOutputDevices,
+  requestOutputAccess,
+  resolveOutputDevice,
+  type OutputDevice,
+} from '@/audio/outputDevice'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
@@ -350,6 +403,69 @@ const saveSettings = async () => {
   } finally {
     saving.value = false
   }
+}
+
+// ---- Audio output (this browser only) ----
+
+const outputSelectionSupported = supportsOutputSelection()
+const outputDevices = ref<OutputDevice[]>([])
+const outputDeviceMessage = ref<string>('')
+
+// A saved device that isn't in the list is still offered, so the select shows
+// what is chosen; but only once we can see devices at all, since before
+// permission the list is empty for every device.
+const savedDeviceMissing = computed(
+  () =>
+    !!settingsStore.audioOutputDeviceId &&
+    outputDevices.value.length > 0 &&
+    !outputDevices.value.some(d => d.deviceId === settingsStore.audioOutputDeviceId),
+)
+
+const refreshOutputDevices = async () => {
+  try {
+    outputDevices.value = await listOutputDevices()
+  } catch {
+    outputDevices.value = []
+  }
+  // Follow the saved device if the browser has re-issued its id.
+  const resolved = await resolveOutputDevice(
+    settingsStore.audioOutputDeviceId,
+    settingsStore.audioOutputDeviceLabel,
+  )
+  if (resolved) settingsStore.audioOutputDeviceId = resolved
+}
+
+const findOutputDevices = async () => {
+  outputDeviceMessage.value = ''
+  try {
+    await requestOutputAccess()
+  } catch {
+    outputDeviceMessage.value =
+      'The browser did not allow access, so devices cannot be listed. Alerts will use the system default.'
+    return
+  }
+  await refreshOutputDevices()
+  if (outputDevices.value.length === 0) {
+    outputDeviceMessage.value = 'No selectable output devices were found.'
+  }
+}
+
+const selectOutputDevice = (deviceId: string) => {
+  settingsStore.audioOutputDeviceId = deviceId
+  settingsStore.audioOutputDeviceLabel =
+    outputDevices.value.find(d => d.deviceId === deviceId)?.label ??
+    (deviceId ? settingsStore.audioOutputDeviceLabel : '')
+}
+
+const testOutputDevice = () => {
+  outputDeviceMessage.value = ''
+  void playClip(ALERT_TONES[0]!.url, {
+    deviceId: settingsStore.audioOutputDeviceId,
+    onDeviceUnavailable: () => {
+      outputDeviceMessage.value =
+        'The chosen device is unavailable, so the test played on the system default.'
+    },
+  })
 }
 
 // ---- Organization Settings (server-side, per-organization) ----
@@ -530,6 +646,7 @@ const saveOrgSettings = async () => {
 
 onMounted(() => {
   void loadOrgSettings()
+  if (outputSelectionSupported) void refreshOutputDevices()
 })
 
 const clearSettings = () => {
