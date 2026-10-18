@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { createApp } from './api'
 import { createInMemoryStore } from './store.fake'
 import type { Alert, Organization } from '../shared/types'
+import { BUILD_ID } from '../shared/build'
 
 const orgRow: Organization = {
 	org_id: 'o1',
@@ -113,6 +114,34 @@ describe('GET /api/org/:organizationKey/alerts authentication', () => {
 		)
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual([])
+	})
+})
+
+describe('X-Build-Id header', () => {
+	it('names the build on successful responses', async () => {
+		const res = await appWith([orgRow]).request(
+			'/api/org/boone/alerts',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+		expect(res.headers.get('X-Build-Id')).toBe(BUILD_ID)
+	})
+
+	it('names the build on error responses too', async () => {
+		const res = await appWith([orgRow]).request('/api/org/boone/alerts', {}, env)
+		expect(res.status).toBe(401)
+		expect(res.headers.get('X-Build-Id')).toBe(BUILD_ID)
+	})
+
+	it('names the build on the alert stream', async () => {
+		const store = createInMemoryStore({ orgs: [{ ...orgRow }], alerts: [] })
+		const res = await createApp(() => store, { pollMs: 2, maxMs: 10 }).request(
+			'/api/org/boone/alerts/stream',
+			{ headers: { Authorization: 'Bearer abcdef' } },
+			env,
+		)
+		expect(res.headers.get('X-Build-Id')).toBe(BUILD_ID)
+		await res.text()
 	})
 })
 

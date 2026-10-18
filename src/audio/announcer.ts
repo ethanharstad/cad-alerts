@@ -82,5 +82,9 @@ export function createAlertAnnouncer(
 		get hasPending() {
 			return pending !== null
 		},
+		/** Whether an alert is playing or waiting to — i.e. not safe to interrupt. */
+		get isBusy() {
+			return speaking || pending !== null
+		},
 	}
 }

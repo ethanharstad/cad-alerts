@@ -30,6 +30,13 @@ organization through an authenticated API.
   alert, plus per-org quiet hours with their own tone. Orgs store only tone ids;
   to add a tone, drop the file in `public/tones/` and register it in
   `ALERT_TONES` (never rename an id in use).
+- **Self-update** (`shared/build.ts`, `src/update/reload.ts`): `vite build`
+  stamps one build id (`GITHUB_SHA`) into both the SPA and the Worker. Every
+  API response carries it as `X-Build-Id`; a dashboard that sees a different id
+  reloads once no alert is playing and it isn't paused (with jitter and a
+  sessionStorage loop guard). Since a reload loses browser autoplay permission,
+  the dashboard probes for it and shows an "Audio blocked" banner
+  (`src/audio/autoplay.ts`) until someone taps the screen.
 - **Shared** (`shared/types.ts`): API contract types shared by frontend and
   backend. `server/schema.ts` has a compile-time guard asserting Drizzle row
   types stay assignable to these — keep them in lockstep.

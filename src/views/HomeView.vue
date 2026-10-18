@@ -4,6 +4,8 @@ import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
 import { playClip } from '@/audio/play'
+import { audioBlocked, probeAudio } from '@/audio/autoplay'
+import { createReloadScheduler } from '@/update/reload'
 import {
   getOrganization,
   getAlerts,
@@ -209,6 +211,24 @@ const startStream = () => {
   )
 }
 
+// Reload onto a new deploy when one ships, but never mid-announcement, and
+// never out from under an operator's pause — a reload would resume the stream
+// they deliberately stopped. A paused dashboard picks the update up on resume.
+const reloadScheduler = createReloadScheduler({
+  isBusy: () => announcer.isBusy || isPaused.value,
+})
+
+// The block lifts on the first tap or keypress, wherever it lands — the banner
+// is just the obvious place to tap. Playing inside that gesture is what unlocks
+// sound, so the probe runs from the listener itself.
+const unlockAudio = () => {
+  if (audioBlocked.value) void probeAudio()
+}
+
+// Only a dashboard that is meant to speak can be "blocked"; with auto-play off
+// there is nothing to warn about.
+const showAudioBlocked = computed(() => audioBlocked.value && settingsStore.autoPlayNewAlerts)
+
 const stopStream = () => {
   if (streamHandle) {
     streamHandle.close()
@@ -247,6 +267,11 @@ const manualRefresh = async () => {
 }
 
 onMounted(() => {
+  document.addEventListener('pointerdown', unlockAudio)
+  document.addEventListener('keydown', unlockAudio)
+  // Find out now whether sound is blocked, rather than by missing the next call.
+  if (settingsStore.autoPlayNewAlerts) void probeAudio()
+
   fetchOrganization().then(() => {
     // Everything the initial load will show is now in `alerts`; from here on,
     // stream arrivals are genuinely new and may auto-play.
@@ -258,6 +283,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('pointerdown', unlockAudio)
+  document.removeEventListener('keydown', unlockAudio)
+  reloadScheduler.stop()
   stopStream()
   announcer.clear()
 })
@@ -266,6 +294,17 @@ onUnmounted(() => {
 <template>
   <main class="home">
     <div class="home-container">
+      <button
+        v-if="showAudioBlocked"
+        type="button"
+        class="audio-blocked"
+        role="alert"
+        @click="unlockAudio"
+      >
+        <span class="audio-blocked-title">🔇 Audio blocked — alerts will not be heard</span>
+        <span class="audio-blocked-detail">Tap anywhere to enable sound</span>
+      </button>
+
       <div v-if="loading" class="status-message loading">
         <p>Loading organization...</p>
       </div>
@@ -329,6 +368,43 @@ onUnmounted(() => {
 .home-container {
   /* max-width: 800px; */
   margin: 0 auto;
+}
+
+.audio-blocked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin-bottom: 1.5rem;
+  padding: 2rem 1rem;
+  border: 3px solid #a71d2a;
+  border-radius: 8px;
+  background: #dc3545;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  animation: audio-blocked-pulse 2s ease-in-out infinite;
+}
+
+.audio-blocked-title {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.audio-blocked-detail {
+  font-size: 1.25rem;
+}
+
+/* Movement catches the eye from across a room in a way a static box does not. */
+@keyframes audio-blocked-pulse {
+  0%,
+  100% {
+    background: #dc3545;
+  }
+  50% {
+    background: #a71d2a;
+  }
 }
 
 h1 {

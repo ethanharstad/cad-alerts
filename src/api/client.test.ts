@@ -10,6 +10,7 @@ import {
   type SSEEvent,
   type StreamStatus,
 } from './client'
+import { onServerBuild } from '../update/reload'
 
 function mockFetch(response: Partial<Response> & { ok: boolean }) {
   const fetchMock = vi.fn().mockResolvedValue(response)
@@ -349,5 +350,33 @@ describe('fetchAlertAudio', () => {
       name: 'ApiError',
       status: 401,
     })
+  })
+})
+
+describe('build id reporting', () => {
+  it('passes on the X-Build-Id header of a response', async () => {
+    const seen: string[] = []
+    const unsubscribe = onServerBuild((id) => seen.push(id))
+    mockFetch({
+      ok: true,
+      headers: new Headers({ 'X-Build-Id': 'abc123' }),
+      json: async () => [],
+    } as unknown as Response)
+
+    await getAlerts('boone', 's3cret')
+    unsubscribe()
+
+    expect(seen).toEqual(['abc123'])
+  })
+
+  it('passes it on for a failed response too', async () => {
+    const seen: string[] = []
+    const unsubscribe = onServerBuild((id) => seen.push(id))
+    mockFetch({ ok: false, status: 500, headers: new Headers({ 'X-Build-Id': 'abc123' }) } as Response)
+
+    await expect(getAlerts('boone', 's3cret')).rejects.toBeInstanceOf(ApiError)
+    unsubscribe()
+
+    expect(seen).toEqual(['abc123'])
   })
 })
