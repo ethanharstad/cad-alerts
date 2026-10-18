@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
+import { playClip } from '@/audio/play'
 import {
   getOrganization,
   getAlerts,
@@ -13,6 +14,7 @@ import {
   type StreamStatus,
 } from '@/api/client'
 import type { Alert, PublicOrganization } from '../../shared/types'
+import { selectTone } from '../../shared/alertTones'
 
 const MAX_ALERTS = 5
 
@@ -112,27 +114,24 @@ const onAlertArrived = (alert: Alert) => {
 }
 
 /**
- * Play one alert's audio, resolving when it has finished — the announcer relies
- * on that to know when it may start another. A failure resolves too: a clip that
+ * Play one alert's audio, preceded by the organization's alert tone for the
+ * current time of day, resolving when it has finished — the announcer relies on
+ * that to know when it may start another. A failure resolves too: a clip that
  * won't play must not wedge the next one.
  */
 const playAlert = async (alert: Alert) => {
   try {
+    // Load the speech before sounding the tone, so the tone is never followed
+    // by a gap — or by nothing, if the audio cannot be fetched.
     const audioUrl = await fetchAlertAudio(
       settingsStore.organizationKey,
       alert.alert_id,
       settingsStore.organizationSecret,
     )
-    const audio = new Audio(audioUrl)
     try {
-      await new Promise<void>(resolve => {
-        audio.addEventListener('ended', () => resolve())
-        audio.addEventListener('error', () => resolve())
-        audio.play().catch(err => {
-          console.error('Failed to auto-play alert:', err)
-          resolve()
-        })
-      })
+      const tone = organization.value ? selectTone(organization.value, new Date()) : undefined
+      if (tone) await playClip(tone.url)
+      await playClip(audioUrl)
     } finally {
       URL.revokeObjectURL(audioUrl)
     }

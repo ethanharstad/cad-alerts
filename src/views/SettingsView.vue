@@ -136,6 +136,73 @@
           </div>
 
           <div class="form-group">
+            <label for="alertTone">Alert Tone</label>
+            <div class="tone-row">
+              <select id="alertTone" v-model="alertTone">
+                <option value="">None</option>
+                <option v-for="tone in ALERT_TONES" :key="tone.id" :value="tone.id">
+                  {{ tone.label }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="btn-secondary btn-preview"
+                :disabled="!alertTone"
+                @click="previewTone(alertTone)"
+              >
+                ▶ Preview
+              </button>
+            </div>
+            <p class="help-text">Played before each alert is read out.</p>
+          </div>
+
+          <fieldset class="form-group quiet-hours">
+            <legend>Quiet Hours</legend>
+            <div class="time-row">
+              <div>
+                <label for="quietStart">Start</label>
+                <input id="quietStart" v-model="quietStart" type="time" />
+              </div>
+              <div>
+                <label for="quietEnd">End</label>
+                <input id="quietEnd" v-model="quietEnd" type="time" />
+              </div>
+            </div>
+
+            <label for="quietAlertTone">Quiet Hours Tone</label>
+            <div class="tone-row">
+              <select id="quietAlertTone" v-model="quietAlertTone" :disabled="!quietHoursSet">
+                <option value="">None</option>
+                <option v-for="tone in ALERT_TONES" :key="tone.id" :value="tone.id">
+                  {{ tone.label }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="btn-secondary btn-preview"
+                :disabled="!quietAlertTone || !quietHoursSet"
+                @click="previewTone(quietAlertTone)"
+              >
+                ▶ Preview
+              </button>
+            </div>
+            <p class="help-text">
+              During quiet hours this tone plays instead of the alert tone above;
+              choose None to play no tone at all. Times follow each dashboard's own
+              clock, and a window that ends before it starts (e.g. 22:00–06:00)
+              runs overnight. Leave both times blank for no quiet hours.
+            </p>
+            <button
+              v-if="quietStart || quietEnd"
+              type="button"
+              class="link-button"
+              @click="clearQuietHours"
+            >
+              Clear quiet hours
+            </button>
+          </fieldset>
+
+          <div class="form-group">
             <label for="ttsTemplate">Text-to-Speech Template</label>
             <p class="help-text">
               Click a token to insert it, and add your own text around it. Write
@@ -223,6 +290,13 @@ import {
   MIN_ACTIONABLE_WINDOW_MINUTES,
   MAX_ACTIONABLE_WINDOW_MINUTES,
 } from '../../shared/actionableWindow'
+import {
+  ALERT_TONES,
+  findTone,
+  parseTimeOfDay,
+  formatTimeOfDay,
+} from '../../shared/alertTones'
+import { playClip } from '@/audio/play'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
@@ -288,6 +362,24 @@ const ttsTemplate = ref<string>('')
 // Held as the raw input string so blank stays distinguishable from a number —
 // blank means "no organization value, use the default".
 const actionableWindow = ref<string>('')
+// Tone ids, with '' standing for "no tone" so they bind straight to a <select>.
+const alertTone = ref<string>('')
+const quietAlertTone = ref<string>('')
+// Quiet hours as `HH:MM` strings from <input type="time">; '' is unset.
+const quietStart = ref<string>('')
+const quietEnd = ref<string>('')
+
+const quietHoursSet = computed(() => !!quietStart.value && !!quietEnd.value)
+
+const previewTone = (id: string) => {
+  const tone = findTone(id)
+  if (tone) void playClip(tone.url)
+}
+
+const clearQuietHours = () => {
+  quietStart.value = ''
+  quietEnd.value = ''
+}
 
 const orgLoading = ref<boolean>(false)
 // The organization key whose settings currently populate the fields below, so we
@@ -312,6 +404,10 @@ const applyOrg = (org: PublicOrganization) => {
   ttsTemplate.value = org.tts_template ?? ''
   actionableWindow.value =
     org.actionable_window_minutes == null ? '' : String(org.actionable_window_minutes)
+  alertTone.value = org.alert_tone ?? ''
+  quietAlertTone.value = org.quiet_alert_tone ?? ''
+  quietStart.value = org.quiet_hours_start == null ? '' : formatTimeOfDay(org.quiet_hours_start)
+  quietEnd.value = org.quiet_hours_end == null ? '' : formatTimeOfDay(org.quiet_hours_end)
   loadedKey.value = org.org_key
 }
 
@@ -379,6 +475,21 @@ const saveOrgSettings = async () => {
     return
   }
 
+  // Quiet hours are both-or-neither, and a zero-length window would never apply.
+  const quietStartMinutes = quietStart.value ? parseTimeOfDay(quietStart.value) : null
+  const quietEndMinutes = quietEnd.value ? parseTimeOfDay(quietEnd.value) : null
+  if ((quietStartMinutes === null) !== (quietEndMinutes === null)) {
+    orgMessage.value = 'Set both a start and an end for quiet hours, or leave both blank'
+    orgMessageType.value = 'error'
+    return
+  }
+  if (quietStartMinutes !== null && quietStartMinutes === quietEndMinutes) {
+    orgMessage.value = 'Quiet hours must start and end at different times'
+    orgMessageType.value = 'error'
+    return
+  }
+  const quietHoursOn = quietStartMinutes !== null
+
   orgSaving.value = true
   orgMessage.value = ''
   try {
@@ -390,6 +501,11 @@ const saveOrgSettings = async () => {
         default_state: defaultState.value.trim() || null,
         tts_template: trimmedTemplate || null,
         actionable_window_minutes: windowMinutes,
+        alert_tone: alertTone.value || null,
+        // A quiet tone without quiet hours would never play, so drop it.
+        quiet_alert_tone: quietHoursOn ? quietAlertTone.value || null : null,
+        quiet_hours_start: quietStartMinutes,
+        quiet_hours_end: quietEndMinutes,
       },
     )
     applyOrg(org)
@@ -400,7 +516,7 @@ const saveOrgSettings = async () => {
     }, 3000)
   } catch (err) {
     if (err instanceof ApiError && err.status === 400) {
-      orgMessage.value = 'The server rejected the template — check the tokens'
+      orgMessage.value = 'The server rejected these settings — check the values'
     } else if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
       orgMessage.value = 'Could not authenticate — check your organization credentials'
     } else {
@@ -476,7 +592,8 @@ label {
   color: var(--color-text);
 }
 
-input {
+input,
+select {
   width: 100%;
   padding: 0.75rem;
   border: 1px solid var(--color-border);
@@ -487,10 +604,53 @@ input {
   box-sizing: border-box;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: var(--color-border-hover);
   box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+}
+
+.tone-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tone-row select {
+  flex: 1;
+}
+
+.btn-preview {
+  white-space: nowrap;
+  padding: 0.5rem 1rem;
+}
+
+.btn-preview:disabled,
+select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quiet-hours {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1rem;
+}
+
+.quiet-hours legend {
+  padding: 0 0.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.time-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.time-row > div {
+  flex: 1;
 }
 
 .help-text {

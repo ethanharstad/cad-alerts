@@ -31,6 +31,10 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				org.default_state = settings.default_state;
 				org.tts_template = settings.tts_template;
 				org.actionable_window_minutes = settings.actionable_window_minutes;
+				org.alert_tone = settings.alert_tone;
+				org.quiet_alert_tone = settings.quiet_alert_tone;
+				org.quiet_hours_start = settings.quiet_hours_start;
+				org.quiet_hours_end = settings.quiet_hours_end;
 			}
 		},
 		async latestAlerts(orgId, limit) {
