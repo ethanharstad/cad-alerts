@@ -169,4 +169,20 @@ describe('createAlertAnnouncer', () => {
 		await finishOne()
 		expect(spoken).toEqual(['playing'])
 	})
+
+	it('is busy while an alert plays or waits, and idle once all have finished', async () => {
+		const { speak, finishOne } = controllableSpeaker()
+		const announcer = announcerAt(speak)
+		expect(announcer.isBusy).toBe(false)
+
+		announcer.announce(alert('first', NOW - 2000))
+		expect(announcer.isBusy).toBe(true)
+		announcer.announce(alert('second', NOW - 1000))
+
+		await finishOne()
+		expect(announcer.isBusy).toBe(true)
+		await finishOne()
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(announcer.isBusy).toBe(false)
+	})
 })

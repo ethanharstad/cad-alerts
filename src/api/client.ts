@@ -1,4 +1,6 @@
 import type { Alert, PublicOrganization, OrgSettings } from '../../shared/types'
+import { BUILD_ID_HEADER } from '../../shared/build'
+import { noteServerBuild } from '../update/reload'
 
 const API_BASE = '/api'
 
@@ -21,8 +23,17 @@ function authHeaders(secret: string): HeadersInit {
   return { Authorization: `Bearer ${secret}` }
 }
 
+/**
+ * Pass on which build served a response, so a dashboard can tell when a deploy
+ * has shipped (src/update/reload.ts). Called for every response, success or not.
+ */
+function noteBuild(response: Response) {
+  noteServerBuild(response.headers?.get(BUILD_ID_HEADER))
+}
+
 async function getJson<T>(path: string, secret: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { headers: authHeaders(secret) })
+  noteBuild(response)
   if (!response.ok) {
     throw new ApiError(response.status, `Request failed with status ${response.status}`)
   }
@@ -36,6 +47,7 @@ async function putJson<T>(path: string, secret: string, body: unknown): Promise<
     headers: { ...authHeaders(secret), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  noteBuild(response)
   if (!response.ok) {
     throw new ApiError(response.status, `Request failed with status ${response.status}`)
   }
@@ -203,6 +215,10 @@ export function streamAlerts(
           headers,
           signal: controller.signal,
         })
+        // The server caps each connection, so a reconnect lands on a new deploy
+        // within minutes of it shipping — this is how a dashboard on the stream
+        // finds out.
+        noteBuild(response)
         if (!response.ok || !response.body) {
           throw new ApiError(response.status, `Stream failed with status ${response.status}`)
         }
@@ -276,6 +292,7 @@ export async function fetchAlertAudio(
 ): Promise<string> {
   const path = `/org/${encodeURIComponent(organizationKey)}/alerts/${encodeURIComponent(alertId)}/audio`
   const response = await fetch(`${API_BASE}${path}`, { headers: authHeaders(secret) })
+  noteBuild(response)
   if (!response.ok) {
     throw new ApiError(response.status, `Request failed with status ${response.status}`)
   }

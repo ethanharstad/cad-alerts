@@ -13,6 +13,7 @@ import {
 	MAX_ACTIONABLE_WINDOW_MINUTES,
 } from '../shared/actionableWindow';
 import { isValidToneId, isValidMinuteOfDay } from '../shared/alertTones';
+import { BUILD_ID, BUILD_ID_HEADER } from '../shared/build';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -54,6 +55,14 @@ export function createApp(
 	app.use('*', async (c, next) => {
 		c.set('store', resolveStore(c.env));
 		await next();
+	});
+
+	// Stamp every response with the build it came from, so a long-running
+	// dashboard learns of a deploy from traffic it already makes — each stream
+	// reconnect, each fallback poll — and reloads onto it.
+	app.use('*', async (c, next) => {
+		await next();
+		c.res.headers.set(BUILD_ID_HEADER, BUILD_ID);
 	});
 
 	/**
