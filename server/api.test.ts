@@ -18,6 +18,9 @@ const orgRow: Organization = {
 	quiet_alert_tone: null,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
+	allowed_senders: null,
+	alert_cap_hourly: null,
+	alert_cap_monthly: null,
 }
 
 function alertRow(id: string, timestamp: number): Alert {
@@ -86,6 +89,7 @@ describe('GET /api/org/:organizationKey authentication', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -387,6 +391,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -467,6 +472,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 				quiet_alert_tone: 'purvis-soft',
 				quiet_hours_start: 22 * 60,
 				quiet_hours_end: 6 * 60,
+				allowed_senders: null,
 			},
 		)
 		expect(res.status).toBe(200)
@@ -475,6 +481,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_alert_tone: 'purvis-soft',
 			quiet_hours_start: 1320,
 			quiet_hours_end: 360,
+			allowed_senders: null,
 		})
 	})
 
@@ -484,6 +491,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			alert_tone: 'burst-fade',
 			quiet_hours_start: 1320,
 			quiet_hours_end: 360,
+			allowed_senders: null,
 		})
 		const res = await put(app, 'boone', { Authorization: 'Bearer abcdef' }, {})
 		expect(res.status).toBe(200)
@@ -492,6 +500,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 	})
 
@@ -524,6 +533,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 				quiet_alert_tone: null,
 				quiet_hours_start: null,
 				quiet_hours_end: null,
+				allowed_senders: null,
 			},
 		)
 		const res = await app.request(
@@ -544,6 +554,65 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
+	})
+
+	it('stores a normalized sender allowlist', async () => {
+		const res = await put(
+			appWith([orgRow]),
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{ allowed_senders: ' CAD@County.gov \n\n@dispatch.county.gov\ncad@county.gov' },
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			allowed_senders: 'cad@county.gov\n@dispatch.county.gov',
+		})
+	})
+
+	it('clears the sender allowlist when blank', async () => {
+		const res = await put(appWith([{ ...orgRow, allowed_senders: '@a.org' }]), 'boone', { Authorization: 'Bearer abcdef' }, { allowed_senders: '  ' })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ allowed_senders: null })
+	})
+
+	it.each([
+		['a bare word', 'county'],
+		['a bare domain without @', 'county.gov'],
+		['an address with spaces', 'cad dispatch@county.gov'],
+		['a non-string', ['cad@county.gov']],
+	])('rejects an allowlist with %s', async (_label, value) => {
+		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { allowed_senders: value })
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects an allowlist with too many entries', async () => {
+		const many = Array.from({ length: 51 }, (_, i) => `cad${i}@county.gov`).join('\n')
+		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { allowed_senders: many })
+		expect(res.status).toBe(400)
+	})
+
+	it('never exposes or changes the admin-only alert caps', async () => {
+		const capped = { ...orgRow, alert_cap_hourly: 30, alert_cap_monthly: 2000 }
+		const store = createInMemoryStore({ orgs: [capped] })
+		const app = createApp(() => store)
+		const res = await put(app, 'boone', { Authorization: 'Bearer abcdef' }, {
+			alert_cap_hourly: 1_000_000,
+			alert_cap_monthly: null,
+		})
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).not.toHaveProperty('alert_cap_hourly')
+		expect(body).not.toHaveProperty('alert_cap_monthly')
+		expect(await store.findOrgByKey('boone')).toMatchObject({
+			alert_cap_hourly: 30,
+			alert_cap_monthly: 2000,
+		})
+
+		const get = await app.request('/api/org/boone', { headers: { Authorization: 'Bearer abcdef' } }, env)
+		const getBody = await get.json()
+		expect(getBody).not.toHaveProperty('alert_cap_hourly')
+		expect(getBody).not.toHaveProperty('alert_cap_monthly')
 	})
 })

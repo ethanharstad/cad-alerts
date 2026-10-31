@@ -14,6 +14,12 @@ import {
 } from '../shared/actionableWindow';
 import { isValidToneId, isValidMinuteOfDay } from '../shared/alertTones';
 import { BUILD_ID, BUILD_ID_HEADER } from '../shared/build';
+import {
+	parseAllowedSenders,
+	invalidSenderEntries,
+	formatAllowedSenders,
+	MAX_ALLOWED_SENDERS,
+} from '../shared/senders';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -96,9 +102,15 @@ export function createApp(
 		await next();
 	});
 
-	// Strip the access_key shared secret from an org row for a client response.
+	// Strip the access_key shared secret and the admin-only caps from an org row
+	// for a client response.
 	const toPublicOrganization = (org: Organization): PublicOrganization => {
-		const { access_key: _access_key, ...pub } = org;
+		const {
+			access_key: _access_key,
+			alert_cap_hourly: _alert_cap_hourly,
+			alert_cap_monthly: _alert_cap_monthly,
+			...pub
+		} = org;
 		return pub;
 	};
 
@@ -159,6 +171,25 @@ export function createApp(
 			}
 		}
 
+		// Sender allowlist: one address or @domain per line. A bad entry is
+		// rejected rather than dropped, since a silently lost entry would start
+		// refusing that sender's pre-alerts.
+		if (body.allowed_senders !== undefined && body.allowed_senders !== null && typeof body.allowed_senders !== 'string') {
+			throw new HTTPException(400, { message: 'allowed_senders must be a string' });
+		}
+		const senders = parseAllowedSenders(body.allowed_senders as string | null | undefined);
+		const badSenders = invalidSenderEntries(senders);
+		if (badSenders.length > 0) {
+			throw new HTTPException(400, {
+				message: `Invalid allowed sender(s): ${badSenders.join(', ')} — use an address or @domain`,
+			});
+		}
+		if (senders.length > MAX_ALLOWED_SENDERS) {
+			throw new HTTPException(400, {
+				message: `At most ${MAX_ALLOWED_SENDERS} allowed senders`,
+			});
+		}
+
 		const settings: OrgSettings = {
 			default_city: normalize(body.default_city),
 			default_state: normalize(body.default_state),
@@ -168,6 +199,7 @@ export function createApp(
 			quiet_alert_tone: quietAlertTone,
 			quiet_hours_start: quietStart as number | null,
 			quiet_hours_end: quietEnd as number | null,
+			allowed_senders: formatAllowedSenders(senders),
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can

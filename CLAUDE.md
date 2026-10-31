@@ -25,6 +25,13 @@ organization through an authenticated API.
     the `email` handler when a message subject contains "pre-alert".
   - `server/parse.ts` — parses the pipe-delimited CAD email body.
   - `server/prompts.ts` — OpenAI prompt/instruction strings.
+- **Intake protection** (`shared/senders.ts`, `server/caps.ts`): the pipeline
+  rejects (non-retryably) a sender not on the org's `allowed_senders` list
+  (exact addresses / `@domain`; empty allows all), skips an exact resend of a
+  recent alert before any paid step, and checks admin-only soft caps
+  (`alert_cap_hourly`, `alert_cap_monthly`, rolling hour / 30 days, set by hand
+  in SQL, never exposed via the API). Over-cap alerts are still delivered and
+  are reported through `CapReporter` (logs today; the hook for operator alerts).
 - **Alert tones** (`shared/alertTones.ts`): built-in tones (audio in
   `public/tones/`, served as static assets) that dashboards play before an
   alert, plus per-org quiet hours with their own tone. Orgs store only tone ids;

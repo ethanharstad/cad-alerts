@@ -35,6 +35,7 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				org.quiet_alert_tone = settings.quiet_alert_tone;
 				org.quiet_hours_start = settings.quiet_hours_start;
 				org.quiet_hours_end = settings.quiet_hours_end;
+				org.allowed_senders = settings.allowed_senders;
 			}
 		},
 		async latestAlerts(orgId, limit) {
@@ -61,6 +62,9 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 						a.timestamp >= since,
 				)
 				.sort((a, b) => b.timestamp - a.timestamp)[0];
+		},
+		async countAlertsSince(orgId, since) {
+			return rows.filter((a) => a.organization === orgId && a.updated_at >= since).length;
 		},
 		async insertAlert(alert) {
 			rows.push(alert);

@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, asc, desc, and, gte } from 'drizzle-orm';
+import { eq, asc, desc, and, gte, count } from 'drizzle-orm';
 
 import { organizations, alerts } from './schema';
 import type { Organization, Alert, OrgSettings } from '../shared/types';
@@ -53,6 +53,12 @@ export interface AlertStore {
 		city: string,
 		since: number,
 	): Promise<Alert | undefined>;
+	/**
+	 * How many of an organization's alerts changed (were inserted or revised) at
+	 * or after `since` (epoch ms). Backs the soft per-org volume caps: an alert
+	 * revised in the window counts once, as each revision costs a synthesis.
+	 */
+	countAlertsSince(orgId: string, since: number): Promise<number>;
 	/** Persist a fully-formed alert row. */
 	insertAlert(alert: Alert): Promise<void>;
 	/**
@@ -96,6 +102,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					quiet_alert_tone: settings.quiet_alert_tone,
 					quiet_hours_start: settings.quiet_hours_start,
 					quiet_hours_end: settings.quiet_hours_end,
+					allowed_senders: settings.allowed_senders,
 				})
 				.where(eq(organizations.org_id, orgId));
 		},
@@ -136,6 +143,15 @@ export function createD1Store(d1: D1Database): AlertStore {
 				.limit(1)
 				.get();
 			return alert ?? undefined;
+		},
+		async countAlertsSince(orgId, since) {
+			// Served by idx_alerts_updated_for_org (organization, updated_at).
+			const row = await db
+				.select({ n: count() })
+				.from(alerts)
+				.where(and(eq(alerts.organization, orgId), gte(alerts.updated_at, since)))
+				.get();
+			return row?.n ?? 0;
 		},
 		async insertAlert(alert) {
 			await db.insert(alerts).values(alert);

@@ -16,6 +16,9 @@ const org: Organization = {
 	quiet_alert_tone: null,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
+	allowed_senders: null,
+	alert_cap_hourly: null,
+	alert_cap_monthly: null,
 }
 
 function alert(id: string, orgId: string, timestamp: number, overrides: Partial<Alert> = {}): Alert {
@@ -40,6 +43,19 @@ function alert(id: string, orgId: string, timestamp: number, overrides: Partial<
 // pipeline tests trust it to behave like D1. These pin the behaviour the routes
 // actually depend on, so the fake is a stated contract rather than an accident.
 describe('createInMemoryStore', () => {
+	it('countAlertsSince counts an org\'s alerts changed at or after the bound', async () => {
+		const row = (alert_id: string, organization: string, updated_at: number) => ({
+			alert_id, organization, body: '', audio_url: '', timestamp: 0, updated_at,
+			source: '', address: '', city: '', nature: '', latitude: null, longitude: null,
+		})
+		const store = createInMemoryStore({
+			alerts: [row('a', 'o1', 100), row('b', 'o1', 200), row('c', 'o1', 300), row('d', 'o2', 300)],
+		})
+		expect(await store.countAlertsSince('o1', 200)).toBe(2)
+		expect(await store.countAlertsSince('o1', 301)).toBe(0)
+		expect(await store.countAlertsSince('o2', 0)).toBe(1)
+	})
+
 	it('findOrgByKey returns the seeded org and undefined for unknown keys', async () => {
 		const store = createInMemoryStore({ orgs: [org] })
 		expect(await store.findOrgByKey('boone')).toEqual(org)
@@ -57,6 +73,7 @@ describe('createInMemoryStore', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({
 			org_id: 'o1',
@@ -68,6 +85,7 @@ describe('createInMemoryStore', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 	})
 
@@ -82,6 +100,7 @@ describe('createInMemoryStore', () => {
 			quiet_alert_tone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
+			allowed_senders: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({ default_city: null })
 	})

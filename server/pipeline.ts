@@ -3,6 +3,8 @@ import type { Alert } from '../shared/types';
 import type { AlertStore } from './store';
 import type { AlertGenerator } from './generator';
 import type { AudioStore } from './audio';
+import { parseAllowedSenders, isSenderAllowed } from '../shared/senders';
+import { CAP_WINDOW_MS, isActiveCap, type CapPeriod, type CapReporter } from './caps';
 
 /**
  * Default dedup window: a pre-alert at the same `(organization, address, city)`
@@ -39,6 +41,8 @@ export interface PreAlertDeps {
 	store: AlertStore;
 	generator: AlertGenerator;
 	audioStore: AudioStore;
+	/** Where alerts that go over an org's soft volume cap are reported. */
+	capReporter: CapReporter;
 	/** Build the error that tells the Workflow engine not to retry a doomed step. */
 	nonRetryable: (message: string) => Error;
 	/** The current time, in epoch milliseconds. */
@@ -52,8 +56,10 @@ export interface PreAlertDeps {
 }
 
 /**
- * Process one pre-alert: resolve its organization, parse the email, generate the
- * spoken text and audio, store the audio, and record the alert. Orchestrates the
+ * Process one pre-alert: resolve its organization (rejecting a sender it does
+ * not allow), parse the email, stop early on an exact resend of a recent alert,
+ * report any soft volume cap it exceeds, generate the spoken text and audio,
+ * store the audio, and record the alert. Orchestrates the
  * durable steps in a fixed order (the determinism the Workflow engine requires)
  * but owns no runtime dependency directly — the `step` runner and every adapter
  * arrive as arguments.
@@ -66,16 +72,36 @@ export async function processPreAlert(
 	alertId: string,
 	deps: PreAlertDeps,
 ): Promise<void> {
-	const { org_id: orgId, tts_template: ttsTemplate } = await step.do('Get Org', async () => {
+	const org = await step.do('Get Org', async () => {
 		const orgKey = payload.emailTo.split(',')[0].split('@')[0];
 		const org = await deps.store.findOrgByKey(orgKey);
 		if (!org) {
 			throw deps.nonRetryable(`Org with key "${orgKey}" not found!`);
 		}
+		// Only listed senders may raise an alert; an empty list allows all, so
+		// orgs that have not configured one keep working. Rejected before any
+		// paid step runs, and non-retryable since a resend cannot change it.
+		if (!isSenderAllowed(parseAllowedSenders(org.allowed_senders), payload.emailFrom)) {
+			console.warn('pre-alert sender rejected', {
+				orgKey,
+				emailFrom: payload.emailFrom,
+				alertId,
+			});
+			throw deps.nonRetryable(
+				`Sender "${payload.emailFrom}" is not allowed for org "${orgKey}"`,
+			);
+		}
 		// Return plain JSON so the Workflow engine can memoize this step. The
 		// org's token template drives the spoken text in "Generate Text" below.
-		return { org_id: org.org_id, tts_template: org.tts_template };
+		return {
+			org_id: org.org_id,
+			org_key: org.org_key,
+			tts_template: org.tts_template,
+			alert_cap_hourly: org.alert_cap_hourly,
+			alert_cap_monthly: org.alert_cap_monthly,
+		};
 	});
+	const orgId = org.org_id;
 
 	const preAlert = await step.do('Parse Email', async () => {
 		try {
@@ -88,8 +114,53 @@ export async function processPreAlert(
 		}
 	});
 
+	// An exact resend of an incident we already announced (a CAD resend loop, a
+	// doubled forwarding rule) stops here, before any paid step: no synthesis,
+	// no upload, no row change. A genuine revision — a changed nature or
+	// location fix — differs from the match and goes on to be re-synthesized.
+	const duplicate = await step.do('Check Duplicate', async () => {
+		const match = await deps.store.findRecentMatch(
+			orgId,
+			preAlert.address,
+			preAlert.city,
+			deps.now() - deps.dedupWindowMs,
+		);
+		return (
+			match !== undefined &&
+			match.nature === preAlert.nature &&
+			match.latitude === preAlert.latitude &&
+			match.longitude === preAlert.longitude
+		);
+	});
+	if (duplicate) return;
+
+	// Soft caps: report an org that is over its hourly or monthly volume, but
+	// deliver the alert regardless — a dropped dispatch is worse than the cost.
+	await step.do('Check Caps', async () => {
+		const caps: [CapPeriod, number | null][] = [
+			['hourly', org.alert_cap_hourly],
+			['monthly', org.alert_cap_monthly],
+		];
+		for (const [period, cap] of caps) {
+			if (!isActiveCap(cap)) continue;
+			// Alerts already in the window, plus this one.
+			const count =
+				(await deps.store.countAlertsSince(orgId, deps.now() - CAP_WINDOW_MS[period])) + 1;
+			if (count > cap) {
+				await deps.capReporter.capExceeded({
+					orgId,
+					orgKey: org.org_key,
+					alertId,
+					period,
+					cap,
+					count,
+				});
+			}
+		}
+	});
+
 	const text = await step.do('Generate Text', async () => {
-		return deps.generator.generateText(preAlert, ttsTemplate);
+		return deps.generator.generateText(preAlert, org.tts_template);
 	});
 
 	const audio = await step.do('Get Audio', async () => {
