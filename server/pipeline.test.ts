@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import {
 	processPreAlert,
@@ -10,6 +10,18 @@ import { createInMemoryStore } from './store.fake'
 import { createFakeGenerator } from './generator.fake'
 import { createInMemoryAudioStore } from './audio.fake'
 import type { Alert, Organization } from '../shared/types'
+import type { CapExceeded, CapReporter } from './caps'
+
+// A cap reporter that remembers every over-cap report.
+function recordingCapReporter() {
+	const reports: CapExceeded[] = []
+	const reporter: CapReporter = {
+		async capExceeded(event) {
+			reports.push(event)
+		},
+	}
+	return { reporter, reports }
+}
 
 const org: Organization = {
 	org_id: 'o1',
@@ -24,6 +36,9 @@ const org: Organization = {
 	quiet_alert_tone: null,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
+	allowed_senders: null,
+	alert_cap_hourly: null,
+	alert_cap_monthly: null,
 }
 
 // A pre-alert email addressed to the org's key, with a well-formed body.
@@ -52,6 +67,7 @@ function deps(overrides: Partial<PreAlertDeps> = {}): PreAlertDeps {
 		store: createInMemoryStore({ orgs: [org] }),
 		generator: createFakeGenerator({ text: 'Sick Person. ...' }),
 		audioStore: createInMemoryAudioStore(),
+		capReporter: recordingCapReporter().reporter,
 		nonRetryable: (message) => new Error(message),
 		now: () => 1000,
 		dedupWindowMs: DEFAULT_DEDUP_WINDOW_MS,
@@ -114,6 +130,8 @@ describe('processPreAlert', () => {
 		expect(names).toEqual([
 			'Get Org',
 			'Parse Email',
+			'Check Duplicate',
+			'Check Caps',
 			'Generate Text',
 			'Get Audio',
 			'Upload Audio',
@@ -213,5 +231,186 @@ describe('processPreAlert', () => {
 
 		const alerts = await store.latestAlerts('o1', 5)
 		expect(alerts).toHaveLength(2)
+	})
+
+	describe('sender allowlist', () => {
+		it.each([
+			['an exact address', 'cad@example.com'],
+			['a domain', '@example.com'],
+			['an address with different case', 'CAD@Example.COM'],
+		])('accepts a sender matching %s', async (_label, entry) => {
+			const { step } = recordingStep()
+			const store = createInMemoryStore({ orgs: [{ ...org, allowed_senders: `other@x.org\n${entry}` }] })
+			await processPreAlert(step, payload, 'inst-1', deps({ store }))
+			expect(await store.latestAlerts('o1', 5)).toHaveLength(1)
+		})
+
+		it('rejects an unlisted sender non-retryably before any paid step', async () => {
+			const { step, names } = recordingStep()
+			const store = createInMemoryStore({ orgs: [{ ...org, allowed_senders: '@county.gov' }] })
+			const generator = createFakeGenerator()
+			const audioStore = createInMemoryAudioStore()
+			const put = vi.spyOn(audioStore, 'put')
+			const nonRetryable = vi.fn((message: string) => new Error(message))
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			try {
+				await expect(
+					processPreAlert(step, payload, 'inst-1', deps({ store, generator, audioStore, nonRetryable })),
+				).rejects.toThrow(/not allowed/)
+				expect(warn).toHaveBeenCalledWith('pre-alert sender rejected', expect.objectContaining({ emailFrom: 'cad@example.com' }))
+			} finally {
+				warn.mockRestore()
+			}
+			expect(nonRetryable).toHaveBeenCalledOnce()
+			expect(names).toEqual(['Get Org'])
+			expect(generator.receivedTemplates).toEqual([])
+			expect(put).not.toHaveBeenCalled()
+			expect(await store.latestAlerts('o1', 5)).toEqual([])
+		})
+
+		it('rejects a subdomain of a listed domain', async () => {
+			const { step } = recordingStep()
+			const store = createInMemoryStore({ orgs: [{ ...org, allowed_senders: '@example.com' }] })
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			try {
+				await expect(
+					processPreAlert(step, { ...payload, emailFrom: 'cad@mail.example.com' }, 'inst-1', deps({ store })),
+				).rejects.toThrow(/not allowed/)
+			} finally {
+				warn.mockRestore()
+			}
+		})
+
+		it('allows every sender when the list is empty', async () => {
+			const { step } = recordingStep()
+			const store = createInMemoryStore({ orgs: [{ ...org, allowed_senders: '' }] })
+			await processPreAlert(step, { ...payload, emailFrom: 'anyone@anywhere.net' }, 'inst-1', deps({ store }))
+			expect(await store.latestAlerts('o1', 5)).toHaveLength(1)
+		})
+	})
+
+	describe('early duplicate skip', () => {
+		it('stops an identical resend before text, audio, or any row change', async () => {
+			const { step, names } = recordingStep()
+			const seeded = seededAlert()
+			const store = createInMemoryStore({ orgs: [org], alerts: [seeded] })
+			const generator = createFakeGenerator()
+			const audioStore = createInMemoryAudioStore()
+			const put = vi.spyOn(audioStore, 'put')
+			await processPreAlert(
+				step,
+				payload,
+				'inst-1',
+				deps({ store, generator, audioStore, now: () => 1000 + 60_000 }),
+			)
+
+			expect(names).toEqual(['Get Org', 'Parse Email', 'Check Duplicate'])
+			expect(generator.receivedTemplates).toEqual([])
+			expect(put).not.toHaveBeenCalled()
+			expect(await store.latestAlerts('o1', 5)).toEqual([seeded])
+		})
+
+		it('still synthesizes a revision with a changed nature', async () => {
+			const { step, names } = recordingStep()
+			const store = createInMemoryStore({ orgs: [org], alerts: [seededAlert()] })
+			const generator = createFakeGenerator({ text: 'Cardiac Arrest. ...' })
+			await processPreAlert(
+				step,
+				updatedPayload,
+				'inst-1',
+				deps({ store, generator, now: () => 1000 + 60_000 }),
+			)
+			expect(names).toContain('Get Audio')
+			expect(generator.receivedTemplates).toHaveLength(1)
+			expect((await store.latestAlerts('o1', 5))[0].nature).toBe('CARDIAC ARREST')
+		})
+
+		it('still synthesizes a revision with a changed location fix', async () => {
+			const { step } = recordingStep()
+			const store = createInMemoryStore({ orgs: [org], alerts: [seededAlert({ latitude: 42.1 })] })
+			const generator = createFakeGenerator()
+			await processPreAlert(step, payload, 'inst-1', deps({ store, generator, now: () => 1000 + 60_000 }))
+			expect(generator.receivedTemplates).toHaveLength(1)
+			expect((await store.latestAlerts('o1', 5))[0].latitude).toBe(42.0368)
+		})
+
+		it('treats an identical email after the dedup window as a new alert', async () => {
+			const { step } = recordingStep()
+			const store = createInMemoryStore({ orgs: [org], alerts: [seededAlert()] })
+			await processPreAlert(step, payload, 'inst-1', deps({ store, now: () => 1000 + 31 * 60 * 1000 }))
+			expect(await store.latestAlerts('o1', 5)).toHaveLength(2)
+		})
+	})
+
+	describe('soft volume caps', () => {
+		const HOUR = 60 * 60 * 1000
+		const now = 100 * 24 * HOUR
+		// Alerts elsewhere in town, so none of them dedups against `payload`.
+		const others = (n: number, at: number) =>
+			Array.from({ length: n }, (_, i) =>
+				seededAlert({ alert_id: `old-${at}-${i}`, address: `${i} ELSEWHERE`, timestamp: at, updated_at: at }),
+			)
+
+		it('reports, but still delivers, an alert over the hourly cap', async () => {
+			const { step } = recordingStep()
+			const { reporter, reports } = recordingCapReporter()
+			const store = createInMemoryStore({
+				orgs: [{ ...org, alert_cap_hourly: 2 }],
+				alerts: others(2, now - 10 * 60 * 1000),
+			})
+			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
+
+			expect(reports).toEqual([
+				{ orgId: 'o1', orgKey: 'boone', alertId: 'inst-1', period: 'hourly', cap: 2, count: 3 },
+			])
+			expect((await store.latestAlerts('o1', 10)).map((a) => a.alert_id)).toContain('inst-1')
+		})
+
+		it('does not report an alert that lands exactly on the cap', async () => {
+			const { step } = recordingStep()
+			const { reporter, reports } = recordingCapReporter()
+			const store = createInMemoryStore({
+				orgs: [{ ...org, alert_cap_hourly: 3 }],
+				alerts: others(2, now - 10 * 60 * 1000),
+			})
+			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
+			expect(reports).toEqual([])
+		})
+
+		it('only counts alerts inside each rolling window', async () => {
+			const { step } = recordingStep()
+			const { reporter, reports } = recordingCapReporter()
+			const store = createInMemoryStore({
+				orgs: [{ ...org, alert_cap_hourly: 1, alert_cap_monthly: 3 }],
+				alerts: [
+					...others(3, now - 2 * HOUR), // in the month, outside the hour
+					...others(5, now - 31 * 24 * HOUR), // outside both
+				],
+			})
+			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
+			expect(reports).toEqual([expect.objectContaining({ period: 'monthly', cap: 3, count: 4 })])
+		})
+
+		it('ignores a null or nonsensical cap', async () => {
+			const { step } = recordingStep()
+			const { reporter, reports } = recordingCapReporter()
+			const store = createInMemoryStore({
+				orgs: [{ ...org, alert_cap_hourly: 0, alert_cap_monthly: null }],
+				alerts: others(5, now - 60_000),
+			})
+			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
+			expect(reports).toEqual([])
+		})
+
+		it('does not report an identical resend, which is skipped first', async () => {
+			const { step } = recordingStep()
+			const { reporter, reports } = recordingCapReporter()
+			const store = createInMemoryStore({
+				orgs: [{ ...org, alert_cap_hourly: 1 }],
+				alerts: [seededAlert({ timestamp: now - 60_000, updated_at: now - 60_000 })],
+			})
+			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
+			expect(reports).toEqual([])
+		})
 	})
 })

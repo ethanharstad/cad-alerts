@@ -7,6 +7,7 @@ import { createD1Store } from './store';
 import { createDeterministicGenerator } from './generator';
 import { createR2AudioStore } from './audio';
 import { processPreAlert, DEFAULT_DEDUP_WINDOW_MS } from './pipeline';
+import { createLoggingCapReporter } from './caps';
 
 type WorkflowParams = {
 	emailTo: string;
@@ -17,7 +18,7 @@ type WorkflowParams = {
 /**
  * The durable adapter for the pre-alert intake pipeline. Its only job is to wire
  * the real adapters to `env` — the D1 store, the OpenAI generator, the R2 audio
- * store, the Workflow's non-retryable signal, and the clock — and hand the
+ * store, the cap reporter, the Workflow's non-retryable signal, and the clock — and hand the
  * request to `processPreAlert`, which owns the actual orchestration. The
  * `step.do` durability boundaries live inside that module; the deep logic runs
  * the same whether a real step memoizes or a fake step just invokes.
@@ -28,6 +29,7 @@ export class AlertWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			store: createD1Store(this.env.db),
 			generator: await createDeterministicGenerator(this.env),
 			audioStore: createR2AudioStore(this.env.bucket),
+			capReporter: createLoggingCapReporter(),
 			nonRetryable: (message) => new NonRetryableError(message),
 			now: () => Date.now(),
 			dedupWindowMs: DEFAULT_DEDUP_WINDOW_MS,

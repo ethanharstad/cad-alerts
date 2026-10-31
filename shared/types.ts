@@ -44,15 +44,32 @@ export interface Organization {
 	quiet_hours_start: number | null
 	/** End of quiet hours (exclusive), in minutes after local midnight. */
 	quiet_hours_end: number | null
+	/**
+	 * Who may send this organization pre-alerts: newline-separated exact
+	 * addresses and/or `@domain` entries (see `shared/senders.ts`). Null allows
+	 * every sender.
+	 */
+	allowed_senders: string | null
+	/**
+	 * Admin-only soft cap on alerts (new or revised) per rolling hour. Going over
+	 * is reported but the alert is still delivered. Null means no cap. Set by
+	 * hand in the database; never sent to or accepted from clients.
+	 */
+	alert_cap_hourly: number | null
+	/** Admin-only soft cap per rolling 30 days; see `alert_cap_hourly`. */
+	alert_cap_monthly: number | null
 }
+
+/** Organization fields only an administrator may see or change (via SQL). */
+export type AdminOnlyOrgField = 'alert_cap_hourly' | 'alert_cap_monthly'
 
 /**
  * The organization shape safe to return to clients. Omits `access_key`, which
  * is a shared secret used only for authentication and must never be sent back
- * in an API response. The settings fields are included so the SPA can display
+ * in an API response, and the admin-only usage caps. The settings fields are included so the SPA can display
  * and edit them.
  */
-export type PublicOrganization = Omit<Organization, 'access_key'>
+export type PublicOrganization = Omit<Organization, 'access_key' | AdminOnlyOrgField>
 
 /**
  * The editable organization-level settings, as sent to the settings write
@@ -68,6 +85,7 @@ export interface OrgSettings {
 	quiet_alert_tone: string | null
 	quiet_hours_start: number | null
 	quiet_hours_end: number | null
+	allowed_senders: string | null
 }
 
 export interface Alert {

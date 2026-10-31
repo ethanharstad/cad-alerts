@@ -18,6 +18,12 @@ export const organizations = sqliteTable('organizations', {
 	// Quiet hours as minutes after local midnight; both null means none.
 	quiet_hours_start: integer('quiet_hours_start'),
 	quiet_hours_end: integer('quiet_hours_end'),
+	// Newline-separated pre-alert senders (see shared/senders.ts); null allows all.
+	allowed_senders: text('allowed_senders'),
+	// Admin-only soft caps on alerts per rolling hour / 30 days; null is no cap.
+	// Set by hand in SQL, never through the API.
+	alert_cap_hourly: integer('alert_cap_hourly'),
+	alert_cap_monthly: integer('alert_cap_monthly'),
 }, (table) => ({
 	orgKeyIdx: index('idx_organization_key').on(table.org_key),
 }))

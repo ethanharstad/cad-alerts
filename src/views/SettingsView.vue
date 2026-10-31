@@ -249,6 +249,31 @@
           </fieldset>
 
           <div class="form-group">
+            <label for="allowedSenders">Allowed Pre-Alert Senders</label>
+            <textarea
+              id="allowedSenders"
+              v-model="allowedSenders"
+              rows="3"
+              class="template-input"
+              placeholder="e.g. cad@county.gov&#10;@dispatch.county.gov"
+            ></textarea>
+            <p v-if="invalidSenders.length > 0" class="help-text template-error">
+              Not an address or @domain: {{ invalidSenders.join(', ') }}
+            </p>
+            <p v-else-if="senderCount === 0" class="sender-warning" role="alert">
+              No senders configured — anyone who learns this organization's intake
+              address can trigger an alert on its dashboards. Add your CAD system's
+              sending address or domain.
+            </p>
+            <p class="help-text">
+              One per line: an exact address (<code>cad@county.gov</code>) or a whole
+              domain (<code>@county.gov</code>; subdomains must be listed separately).
+              Pre-alerts from anyone else are rejected. Leave blank to accept all
+              senders.
+            </p>
+          </div>
+
+          <div class="form-group">
             <label for="ttsTemplate">Text-to-Speech Template</label>
             <p class="help-text">
               Click a token to insert it, and add your own text around it. Write
@@ -304,7 +329,7 @@
             <button
               type="submit"
               class="btn-primary"
-              :disabled="orgSaving || !templateValidation.valid"
+              :disabled="orgSaving || !templateValidation.valid || invalidSenders.length > 0"
             >
               {{ orgSaving ? 'Saving…' : 'Save Organization Settings' }}
             </button>
@@ -342,6 +367,12 @@ import {
   parseTimeOfDay,
   formatTimeOfDay,
 } from '../../shared/alertTones'
+import {
+  parseAllowedSenders,
+  invalidSenderEntries,
+  formatAllowedSenders,
+  MAX_ALLOWED_SENDERS,
+} from '../../shared/senders'
 import { playClip } from '@/audio/play'
 import {
   supportsOutputSelection,
@@ -485,6 +516,12 @@ const quietAlertTone = ref<string>('')
 const quietStart = ref<string>('')
 const quietEnd = ref<string>('')
 
+// The sender allowlist as typed, one entry per line.
+const allowedSenders = ref<string>('')
+const parsedSenders = computed(() => parseAllowedSenders(allowedSenders.value))
+const invalidSenders = computed(() => invalidSenderEntries(parsedSenders.value))
+const senderCount = computed(() => parsedSenders.value.length)
+
 const quietHoursSet = computed(() => !!quietStart.value && !!quietEnd.value)
 
 const previewTone = (id: string) => {
@@ -524,6 +561,7 @@ const applyOrg = (org: PublicOrganization) => {
   quietAlertTone.value = org.quiet_alert_tone ?? ''
   quietStart.value = org.quiet_hours_start == null ? '' : formatTimeOfDay(org.quiet_hours_start)
   quietEnd.value = org.quiet_hours_end == null ? '' : formatTimeOfDay(org.quiet_hours_end)
+  allowedSenders.value = org.allowed_senders ?? ''
   loadedKey.value = org.org_key
 }
 
@@ -606,6 +644,17 @@ const saveOrgSettings = async () => {
   }
   const quietHoursOn = quietStartMinutes !== null
 
+  if (invalidSenders.value.length > 0) {
+    orgMessage.value = `Not an address or @domain: ${invalidSenders.value.join(', ')}`
+    orgMessageType.value = 'error'
+    return
+  }
+  if (parsedSenders.value.length > MAX_ALLOWED_SENDERS) {
+    orgMessage.value = `List at most ${MAX_ALLOWED_SENDERS} allowed senders`
+    orgMessageType.value = 'error'
+    return
+  }
+
   orgSaving.value = true
   orgMessage.value = ''
   try {
@@ -622,6 +671,7 @@ const saveOrgSettings = async () => {
         quiet_alert_tone: quietHoursOn ? quietAlertTone.value || null : null,
         quiet_hours_start: quietStartMinutes,
         quiet_hours_end: quietEndMinutes,
+        allowed_senders: formatAllowedSenders(parsedSenders.value),
       },
     )
     applyOrg(org)
@@ -950,6 +1000,16 @@ textarea.template-input:focus {
 
 .template-error {
   color: #721c24;
+}
+
+.sender-warning {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+  border-radius: 4px;
 }
 
 .link-button {
