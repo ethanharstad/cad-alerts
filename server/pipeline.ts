@@ -5,6 +5,8 @@ import type { AlertGenerator } from './generator';
 import type { AudioStore } from './audio';
 import { parseAllowedSenders, isSenderAllowed } from '../shared/senders';
 import { CAP_WINDOW_MS, isActiveCap, type CapPeriod, type CapReporter } from './caps';
+import { isPermanentApiError, isSpeakable, limitSpokenText } from './speech';
+import type { WorkflowStepConfig } from 'cloudflare:workers';
 
 /**
  * Default dedup window: a pre-alert at the same `(organization, address, city)`
@@ -24,12 +26,27 @@ export interface PreAlertPayload {
 /**
  * A durable-step runner. In production this is the Cloudflare `WorkflowStep`
  * (`step.do`), which memoizes each step's result across retries and replays; in
- * tests it is a plain runner that just invokes the closure. `processPreAlert`
- * depends only on this shape, so it never imports the Workflow runtime.
+ * tests it is a plain runner that just invokes the closure (and ignores any
+ * config). `processPreAlert` depends only on this shape, so it never imports the
+ * Workflow runtime (the config type is a type-only import, erased at build).
  */
 export interface StepRunner {
 	do<T>(name: string, callback: () => Promise<T>): Promise<T>;
+	do<T>(name: string, config: WorkflowStepConfig, callback: () => Promise<T>): Promise<T>;
 }
+
+/**
+ * Retry policy for steps that call OpenAI (text generation, when a model
+ * produces it, and speech synthesis). Explicit rather than the Workflow default
+ * so worst-case latency and spend are predictable: at most 1 + 3 attempts,
+ * backing off 2s, 4s, 8s, each bounded by a timeout well above normal TTS
+ * latency for a `MAX_SPOKEN_TEXT_LENGTH`-character alert. The OpenAI
+ * client itself is built with `maxRetries: 0` so these are the only retries.
+ */
+export const PAID_STEP_CONFIG = {
+	retries: { limit: 3, delay: '2 seconds', backoff: 'exponential' },
+	timeout: '45 seconds',
+} satisfies WorkflowStepConfig;
 
 /**
  * Everything `processPreAlert` needs from the outside world. Every adapter is
@@ -159,15 +176,35 @@ export async function processPreAlert(
 		}
 	});
 
-	const text = await step.do('Generate Text', async () => {
-		return deps.generator.generateText(preAlert, org.tts_template);
+	const text = await step.do('Generate Text', PAID_STEP_CONFIG, async () => {
+		const generated = await nonRetryableIfPermanent(deps, () =>
+			deps.generator.generateText(preAlert, org.tts_template),
+		);
+		// Cap what reaches the paid TTS call. Deterministic, so a retry or
+		// replay of this step always yields the same text.
+		const limited = limitSpokenText(generated);
+		if (limited.truncated) {
+			console.warn('spoken alert text truncated', {
+				alertId,
+				orgKey: org.org_key,
+				originalLength: generated.length,
+				length: limited.text.length,
+			});
+		}
+		if (!isSpeakable(limited.text)) {
+			throw deps.nonRetryable(`Generated alert text is blank: ${JSON.stringify(generated)}`);
+		}
+		return limited.text;
 	});
 
-	const audio = await step.do('Get Audio', async () => {
-		return deps.generator.synthesizeSpeech(text);
-	});
-
-	const audioUrl = await step.do('Upload Audio', async () => {
+	// Synthesize and upload in one step, returning only the object key: a
+	// step's return value is persisted in Workflow state (and capped at 1 MiB),
+	// so the MP3 bytes must never be one. A retry re-synthesizes, which can pay
+	// TTS twice if synthesis succeeded but the upload failed — an accepted trade.
+	const audioUrl = await step.do('Synthesize & Upload Audio', PAID_STEP_CONFIG, async () => {
+		const audio = await nonRetryableIfPermanent(deps, () =>
+			deps.generator.synthesizeSpeech(text),
+		);
 		return deps.audioStore.put(alertId, audio);
 	});
 
@@ -221,4 +258,25 @@ export async function processPreAlert(
 		};
 		await deps.store.insertAlert(record);
 	});
+}
+
+/**
+ * Run an upstream API call, converting a permanent failure (a 4xx other than
+ * 408/429; see {@link isPermanentApiError}) into the Workflow's non-retryable
+ * error so the step fails at once instead of repeating a doomed, possibly paid,
+ * call. Transient failures are rethrown unchanged for the step's retry policy.
+ */
+async function nonRetryableIfPermanent<T>(
+	deps: Pick<PreAlertDeps, 'nonRetryable'>,
+	call: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await call();
+	} catch (err) {
+		if (isPermanentApiError(err)) {
+			const message = err instanceof Error ? err.message : String(err);
+			throw deps.nonRetryable(`Upstream API rejected the request: ${message}`);
+		}
+		throw err;
+	}
 }

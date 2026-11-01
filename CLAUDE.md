@@ -22,7 +22,11 @@ organization through an authenticated API.
     `access_key` shared secret (`requireOrgAuth`, constant-time compared).
   - `server/index.ts` — `AlertWorkflow` (Cloudflare Workflow): parse email →
     generate text (OpenAI) → TTS → upload to R2 → insert alert row. Triggered by
-    the `email` handler when a message subject contains "pre-alert".
+    the `email` handler when a message subject contains "pre-alert". TTS and the
+    R2 upload share one step ("Synthesize & Upload Audio") so MP3 bytes never
+    land in Workflow step state; spoken text is capped at
+    `MAX_SPOKEN_TEXT_LENGTH` (`server/speech.ts`) and the paid steps use an
+    explicit retry config (`PAID_STEP_CONFIG`) with 4xx API errors non-retryable.
   - `server/parse.ts` — parses the pipe-delimited CAD email body.
   - `server/prompts.ts` — OpenAI prompt/instruction strings.
 - **Intake protection** (`shared/senders.ts`, `server/caps.ts`): the pipeline

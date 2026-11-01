@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
 	processPreAlert,
 	DEFAULT_DEDUP_WINDOW_MS,
+	PAID_STEP_CONFIG,
 	type PreAlertDeps,
 	type StepRunner,
 } from './pipeline'
@@ -11,6 +12,7 @@ import { createFakeGenerator } from './generator.fake'
 import { createInMemoryAudioStore } from './audio.fake'
 import type { Alert, Organization } from '../shared/types'
 import type { CapExceeded, CapReporter } from './caps'
+import { MAX_SPOKEN_TEXT_LENGTH } from './speech'
 
 // A cap reporter that remembers every over-cap report.
 function recordingCapReporter() {
@@ -48,17 +50,29 @@ const payload = {
 	emailText: 'SICK PERSON | 1704 HAWKEYE DR #APT 104:BOONE | 42.036800,-93.868018',
 }
 
-// A step runner that records step names in order and runs each closure inline —
-// the production WorkflowStep memoizes results across retries; this just invokes.
+// A step runner that records step names (and configs and results) in order and
+// runs each closure inline — the production WorkflowStep memoizes results across
+// retries and applies the config; this just invokes and ignores it.
 function recordingStep() {
 	const names: string[] = []
+	const configs: Record<string, unknown> = {}
+	const results: Record<string, unknown> = {}
 	const step: StepRunner = {
-		do<T>(name: string, cb: () => Promise<T>): Promise<T> {
+		async do<T>(name: string, ...args: unknown[]): Promise<T> {
 			names.push(name)
-			return cb()
+			const cb = args[args.length - 1] as () => Promise<T>
+			if (args.length === 2) configs[name] = args[0]
+			const result = await cb()
+			results[name] = result
+			return result
 		},
 	}
-	return { step, names }
+	return { step, names, configs, results }
+}
+
+// An error shaped like the OpenAI SDK's APIError (which carries `status`).
+function apiError(status: number) {
+	return Object.assign(new Error(`${status} status code`), { status })
 }
 
 // Default dependency bundle; `overrides` swap in a specific store/generator/etc.
@@ -133,10 +147,27 @@ describe('processPreAlert', () => {
 			'Check Duplicate',
 			'Check Caps',
 			'Generate Text',
-			'Get Audio',
-			'Upload Audio',
+			'Synthesize & Upload Audio',
 			'Save Record',
 		])
+	})
+
+	it('keeps audio bytes out of step state, returning only the object key', async () => {
+		const { step, results } = recordingStep()
+		await processPreAlert(step, payload, 'inst-1', deps())
+		for (const value of Object.values(results)) {
+			expect(value).not.toBeInstanceOf(ArrayBuffer)
+		}
+		expect(results['Synthesize & Upload Audio']).toBe('inst-1.mp3')
+	})
+
+	it('passes an explicit retry/timeout config to the paid steps', async () => {
+		const { step, configs } = recordingStep()
+		await processPreAlert(step, payload, 'inst-1', deps())
+		for (const name of ['Generate Text', 'Synthesize & Upload Audio']) {
+			expect(configs[name]).toEqual(PAID_STEP_CONFIG)
+		}
+		expect(PAID_STEP_CONFIG.retries.backoff).toBe('exponential')
 	})
 
 	it("passes the org's tts_template into text generation", async () => {
@@ -320,7 +351,7 @@ describe('processPreAlert', () => {
 				'inst-1',
 				deps({ store, generator, now: () => 1000 + 60_000 }),
 			)
-			expect(names).toContain('Get Audio')
+			expect(names).toContain('Synthesize & Upload Audio')
 			expect(generator.receivedTemplates).toHaveLength(1)
 			expect((await store.latestAlerts('o1', 5))[0].nature).toBe('CARDIAC ARREST')
 		})
@@ -411,6 +442,116 @@ describe('processPreAlert', () => {
 			})
 			await processPreAlert(step, payload, 'inst-1', deps({ store, capReporter: reporter, now: () => now }))
 			expect(reports).toEqual([])
+		})
+	})
+
+	describe('spoken text limits', () => {
+		it('truncates over-long text at a word boundary before synthesis, and logs it', async () => {
+			const { step } = recordingStep()
+			const long = 'Fire alarm. ' + 'very long business name '.repeat(40)
+			const generator = createFakeGenerator({ text: long })
+			const synth = vi.spyOn(generator, 'synthesizeSpeech')
+			const store = createInMemoryStore({ orgs: [org] })
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			try {
+				await processPreAlert(step, payload, 'inst-1', deps({ store, generator }))
+				expect(warn).toHaveBeenCalledWith(
+					'spoken alert text truncated',
+					expect.objectContaining({ alertId: 'inst-1', originalLength: long.length }),
+				)
+			} finally {
+				warn.mockRestore()
+			}
+			const spoken = synth.mock.calls[0][0]
+			expect(spoken.length).toBeLessThanOrEqual(MAX_SPOKEN_TEXT_LENGTH)
+			expect(spoken).toMatch(/ name\.$/)
+			expect((await store.latestAlerts('o1', 5))[0].body).toBe(spoken)
+		})
+
+		it('does not log or alter text within the limit', async () => {
+			const { step } = recordingStep()
+			const generator = createFakeGenerator({ text: 'Sick Person. In Boone.' })
+			const synth = vi.spyOn(generator, 'synthesizeSpeech')
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			try {
+				await processPreAlert(step, payload, 'inst-1', deps({ generator }))
+				expect(warn).not.toHaveBeenCalled()
+			} finally {
+				warn.mockRestore()
+			}
+			expect(synth).toHaveBeenCalledWith('Sick Person. In Boone.')
+		})
+
+		it.each([[''], ['   '], ['. . .']])(
+			'fails non-retryably on blank text %j without synthesizing',
+			async (text) => {
+				const { step } = recordingStep()
+				const generator = createFakeGenerator({ text })
+				const synth = vi.spyOn(generator, 'synthesizeSpeech')
+				const nonRetryable = vi.fn((message: string) => new Error(message))
+				const store = createInMemoryStore({ orgs: [org] })
+				await expect(
+					processPreAlert(step, payload, 'inst-1', deps({ store, generator, nonRetryable })),
+				).rejects.toThrow(/blank/)
+				expect(nonRetryable).toHaveBeenCalledOnce()
+				expect(synth).not.toHaveBeenCalled()
+				expect(await store.latestAlerts('o1', 5)).toEqual([])
+			},
+		)
+	})
+
+	describe('upstream API errors', () => {
+		it.each([400, 401, 403, 404, 422])(
+			'treats a %i from speech synthesis as non-retryable and uploads nothing',
+			async (status) => {
+				const { step } = recordingStep()
+				const generator = createFakeGenerator()
+				vi.spyOn(generator, 'synthesizeSpeech').mockRejectedValue(apiError(status))
+				const audioStore = createInMemoryAudioStore()
+				const put = vi.spyOn(audioStore, 'put')
+				const nonRetryable = vi.fn((message: string) => new Error(`NR: ${message}`))
+				await expect(
+					processPreAlert(step, payload, 'inst-1', deps({ generator, audioStore, nonRetryable })),
+				).rejects.toThrow(/^NR: Upstream API rejected/)
+				expect(nonRetryable).toHaveBeenCalledOnce()
+				expect(put).not.toHaveBeenCalled()
+			},
+		)
+
+		it.each([408, 429, 500, 503])('leaves a %i retryable', async (status) => {
+			const { step } = recordingStep()
+			const generator = createFakeGenerator()
+			const original = apiError(status)
+			vi.spyOn(generator, 'synthesizeSpeech').mockRejectedValue(original)
+			const nonRetryable = vi.fn((message: string) => new Error(message))
+			await expect(
+				processPreAlert(step, payload, 'inst-1', deps({ generator, nonRetryable })),
+			).rejects.toBe(original)
+			expect(nonRetryable).not.toHaveBeenCalled()
+		})
+
+		it('leaves a network error (no status) retryable', async () => {
+			const { step } = recordingStep()
+			const generator = createFakeGenerator()
+			const original = new TypeError('fetch failed')
+			vi.spyOn(generator, 'synthesizeSpeech').mockRejectedValue(original)
+			const nonRetryable = vi.fn((message: string) => new Error(message))
+			await expect(
+				processPreAlert(step, payload, 'inst-1', deps({ generator, nonRetryable })),
+			).rejects.toBe(original)
+			expect(nonRetryable).not.toHaveBeenCalled()
+		})
+
+		it('treats a 4xx from text generation as non-retryable', async () => {
+			const { step } = recordingStep()
+			const generator = createFakeGenerator()
+			vi.spyOn(generator, 'generateText').mockRejectedValue(apiError(401))
+			const synth = vi.spyOn(generator, 'synthesizeSpeech')
+			const nonRetryable = vi.fn((message: string) => new Error(message))
+			await expect(
+				processPreAlert(step, payload, 'inst-1', deps({ generator, nonRetryable })),
+			).rejects.toThrow(/Upstream API rejected/)
+			expect(synth).not.toHaveBeenCalled()
 		})
 	})
 })
