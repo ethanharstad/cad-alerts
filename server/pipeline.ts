@@ -5,7 +5,7 @@ import type { AlertGenerator } from './generator';
 import type { AudioStore } from './audio';
 import { parseAllowedSenders, isSenderAllowed } from '../shared/senders';
 import { CAP_WINDOW_MS, isActiveCap, type CapPeriod, type CapReporter } from './caps';
-import { isPermanentApiError, isSpeakable, limitSpokenText } from './speech';
+import { isPermanentApiError, isSpeakable, limitSpeechFields, limitSpokenText } from './speech';
 import type { WorkflowStepConfig } from 'cloudflare:workers';
 
 /**
@@ -36,16 +36,28 @@ export interface StepRunner {
 }
 
 /**
- * Retry policy for steps that call OpenAI (text generation, when a model
- * produces it, and speech synthesis). Explicit rather than the Workflow default
- * so worst-case latency and spend are predictable: at most 1 + 3 attempts,
- * backing off 2s, 4s, 8s, each bounded by a timeout well above normal TTS
- * latency for a `MAX_SPOKEN_TEXT_LENGTH`-character alert. The OpenAI
- * client itself is built with `maxRetries: 0` so these are the only retries.
+ * Retry policy for "Synthesize & Upload Audio", the paid TTS call. Explicit
+ * rather than the Workflow default so worst-case latency and spend are
+ * predictable: at most 1 + 4 attempts (so at most 5 billed syntheses), backing
+ * off 10s, 20s, 40s, 80s — about 2.5 minutes, long enough to ride out a short
+ * rate-limit burst or upstream blip. The OpenAI client is built with
+ * `maxRetries: 0` and a 40s timeout, so these are the only retries; the step
+ * timeout leaves ample headroom over that for the R2 upload that follows.
  */
-export const PAID_STEP_CONFIG = {
-	retries: { limit: 3, delay: '2 seconds', backoff: 'exponential' },
-	timeout: '45 seconds',
+export const AUDIO_STEP_CONFIG = {
+	retries: { limit: 4, delay: '10 seconds', backoff: 'exponential' },
+	timeout: '90 seconds',
+} satisfies WorkflowStepConfig;
+
+/**
+ * Retry policy for "Generate Text". In production the text is rendered locally
+ * from the org's template, so a failure is almost always a deterministic bug
+ * that would repeat; one retry covers a model-backed generator's transient
+ * error without stalling on a doomed one.
+ */
+export const TEXT_STEP_CONFIG = {
+	retries: { limit: 1, delay: '5 seconds', backoff: 'constant' },
+	timeout: '60 seconds',
 } satisfies WorkflowStepConfig;
 
 /**
@@ -176,12 +188,23 @@ export async function processPreAlert(
 		}
 	});
 
-	const text = await step.do('Generate Text', PAID_STEP_CONFIG, async () => {
+	const text = await step.do('Generate Text', TEXT_STEP_CONFIG, async () => {
+		// Cap each field on its own first, so one oversized field cannot crowd
+		// the location out of the alert. Only this speech copy is capped; the
+		// stored record keeps the full parsed fields.
+		const limitedFields = limitSpeechFields(preAlert);
+		if (limitedFields.truncated.length > 0) {
+			console.warn('pre-alert speech fields truncated', {
+				alertId,
+				orgKey: org.org_key,
+				fields: limitedFields.truncated,
+			});
+		}
 		const generated = await nonRetryableIfPermanent(deps, () =>
-			deps.generator.generateText(preAlert, org.tts_template),
+			deps.generator.generateText(limitedFields.fields, org.tts_template),
 		);
-		// Cap what reaches the paid TTS call. Deterministic, so a retry or
-		// replay of this step always yields the same text.
+		// Backstop cap on what reaches the paid TTS call. Deterministic, so a
+		// retry or replay of this step always yields the same text.
 		const limited = limitSpokenText(generated);
 		if (limited.truncated) {
 			console.warn('spoken alert text truncated', {
@@ -192,7 +215,11 @@ export async function processPreAlert(
 			});
 		}
 		if (!isSpeakable(limited.text)) {
-			throw deps.nonRetryable(`Generated alert text is blank: ${JSON.stringify(generated)}`);
+			// Report only the length: the text is unbounded and the message is
+			// persisted in Workflow state.
+			throw deps.nonRetryable(
+				`Generated alert text is blank (${generated.length} chars, no letters or digits)`,
+			);
 		}
 		return limited.text;
 	});
@@ -201,7 +228,7 @@ export async function processPreAlert(
 	// step's return value is persisted in Workflow state (and capped at 1 MiB),
 	// so the MP3 bytes must never be one. A retry re-synthesizes, which can pay
 	// TTS twice if synthesis succeeded but the upload failed — an accepted trade.
-	const audioUrl = await step.do('Synthesize & Upload Audio', PAID_STEP_CONFIG, async () => {
+	const audioUrl = await step.do('Synthesize & Upload Audio', AUDIO_STEP_CONFIG, async () => {
 		const audio = await nonRetryableIfPermanent(deps, () =>
 			deps.generator.synthesizeSpeech(text),
 		);
@@ -262,7 +289,7 @@ export async function processPreAlert(
 
 /**
  * Run an upstream API call, converting a permanent failure (a 4xx other than
- * 408/429; see {@link isPermanentApiError}) into the Workflow's non-retryable
+ * the transient ones; see {@link isPermanentApiError}) into the Workflow's non-retryable
  * error so the step fails at once instead of repeating a doomed, possibly paid,
  * call. Transient failures are rethrown unchanged for the step's retry policy.
  */

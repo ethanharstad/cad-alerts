@@ -32,7 +32,7 @@ export async function createOpenAIGenerator(env: Env): Promise<AlertGenerator> {
 	const openai = new OpenAI({
 		apiKey: await env.ai_key.get(),
 		baseURL: await env.ai.gateway('sar').getUrl('openai'),
-		// The Workflow step owns retries and timeouts (see PAID_STEP_CONFIG in
+		// The Workflow step owns retries and timeouts (see AUDIO_STEP_CONFIG in
 		// pipeline.ts); SDK-level retries would multiply them invisibly.
 		maxRetries: 0,
 		timeout: 40_000,

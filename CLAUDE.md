@@ -24,9 +24,11 @@ organization through an authenticated API.
     generate text (OpenAI) → TTS → upload to R2 → insert alert row. Triggered by
     the `email` handler when a message subject contains "pre-alert". TTS and the
     R2 upload share one step ("Synthesize & Upload Audio") so MP3 bytes never
-    land in Workflow step state; spoken text is capped at
-    `MAX_SPOKEN_TEXT_LENGTH` (`server/speech.ts`) and the paid steps use an
-    explicit retry config (`PAID_STEP_CONFIG`) with 4xx API errors non-retryable.
+    land in Workflow step state. Speech input is capped per field
+    (`MAX_SPEECH_FIELD_LENGTH`) and then in total (`MAX_SPOKEN_TEXT_LENGTH`,
+    `server/speech.ts`); the text and audio steps use explicit retry configs
+    (`TEXT_STEP_CONFIG`, `AUDIO_STEP_CONFIG`), and 4xx API errors other than
+    401/403/408/429 are non-retryable.
   - `server/parse.ts` — parses the pipe-delimited CAD email body.
   - `server/prompts.ts` — OpenAI prompt/instruction strings.
 - **Intake protection** (`shared/senders.ts`, `server/caps.ts`): the pipeline
