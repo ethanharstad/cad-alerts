@@ -1,13 +1,25 @@
 import { describe, it, expect } from 'vitest'
 
-import { isPermanentApiError, isSpeakable, limitSpokenText, MAX_SPOKEN_TEXT_LENGTH } from './speech'
+import {
+	isPermanentApiError,
+	isSpeakable,
+	limitSpeechFields,
+	limitSpokenText,
+	truncateAtWord,
+	MAX_SPEECH_FIELD_LENGTH,
+	MAX_SPOKEN_TEXT_LENGTH,
+} from './speech'
 
 describe('limitSpokenText', () => {
-	it('leaves text within the limit unchanged (whitespace collapsed)', () => {
+	it('returns text within the limit exactly as given', () => {
 		expect(limitSpokenText('Sick  Person.\n In Boone.')).toEqual({
-			text: 'Sick Person. In Boone.',
+			text: 'Sick  Person.\n In Boone.',
 			truncated: false,
 		})
+	})
+
+	it('collapses whitespace on over-long text before deciding to cut', () => {
+		expect(limitSpokenText('one   two', 7)).toEqual({ text: 'one two', truncated: false })
 	})
 
 	it('keeps text exactly at the limit', () => {
@@ -47,10 +59,10 @@ describe('isSpeakable', () => {
 })
 
 describe('isPermanentApiError', () => {
-	it.each([400, 401, 403, 404, 413, 422])('treats %i as permanent', (status) => {
+	it.each([400, 404, 413, 422])('treats %i as permanent', (status) => {
 		expect(isPermanentApiError({ status })).toBe(true)
 	})
-	it.each([408, 429, 500, 502, 503])('treats %i as transient', (status) => {
+	it.each([401, 403, 408, 429, 500, 502, 503])('treats %i as transient', (status) => {
 		expect(isPermanentApiError({ status })).toBe(false)
 	})
 	it.each([new Error('network'), null, undefined, 'boom', { status: '400' }])(
@@ -59,4 +71,50 @@ describe('isPermanentApiError', () => {
 			expect(isPermanentApiError(err)).toBe(false)
 		},
 	)
+})
+
+describe('truncateAtWord', () => {
+	it('returns text that fits unchanged', () => {
+		expect(truncateAtWord('one two', 7)).toBe('one two')
+	})
+	it('keeps a word that ends exactly at the limit', () => {
+		expect(truncateAtWord('one two three', 7)).toBe('one two')
+	})
+	it('drops dangling punctuation', () => {
+		expect(truncateAtWord('one; two three', 6)).toBe('one')
+	})
+	it('hard-cuts one long word', () => {
+		expect(truncateAtWord('abcdefghij', 4)).toBe('abcd')
+	})
+})
+
+describe('limitSpeechFields', () => {
+	const base = { nature: 'SICK PERSON', address: '1704 HAWKEYE DR', city: 'BOONE', latitude: 1 }
+
+	it('leaves normal fields alone and reports nothing', () => {
+		expect(limitSpeechFields(base)).toEqual({ fields: base, truncated: [] })
+	})
+
+	it('caps each oversized field independently, keeping the others', () => {
+		const long = { ...base, address: 'MAIN ST '.repeat(40), city: 'X'.repeat(100) }
+		const { fields, truncated } = limitSpeechFields(long)
+		expect(truncated).toEqual(['address', 'city'])
+		expect(fields.nature).toBe('SICK PERSON')
+		expect(fields.address.length).toBeLessThanOrEqual(MAX_SPEECH_FIELD_LENGTH.address)
+		expect(fields.city.length).toBeLessThanOrEqual(MAX_SPEECH_FIELD_LENGTH.city)
+		expect(fields.latitude).toBe(1)
+	})
+
+	it('drops a trailing business before the street when the address is cut', () => {
+		const address = `1704 HAWKEYE DR;${' MEMORIAL HOSPITAL'.repeat(10)}`
+		const { fields } = limitSpeechFields({ ...base, address })
+		expect(fields.address.startsWith('1704 HAWKEYE DR;')).toBe(true)
+	})
+
+	it('does not mutate its input', () => {
+		const input = { ...base, nature: 'FIRE '.repeat(40) }
+		const copy = { ...input }
+		limitSpeechFields(input)
+		expect(input).toEqual(copy)
+	})
 })

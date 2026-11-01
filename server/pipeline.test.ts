@@ -3,7 +3,8 @@ import { describe, it, expect, vi } from 'vitest'
 import {
 	processPreAlert,
 	DEFAULT_DEDUP_WINDOW_MS,
-	PAID_STEP_CONFIG,
+	AUDIO_STEP_CONFIG,
+	TEXT_STEP_CONFIG,
 	type PreAlertDeps,
 	type StepRunner,
 } from './pipeline'
@@ -12,7 +13,7 @@ import { createFakeGenerator } from './generator.fake'
 import { createInMemoryAudioStore } from './audio.fake'
 import type { Alert, Organization } from '../shared/types'
 import type { CapExceeded, CapReporter } from './caps'
-import { MAX_SPOKEN_TEXT_LENGTH } from './speech'
+import { MAX_SPEECH_FIELD_LENGTH, MAX_SPOKEN_TEXT_LENGTH } from './speech'
 
 // A cap reporter that remembers every over-cap report.
 function recordingCapReporter() {
@@ -161,13 +162,17 @@ describe('processPreAlert', () => {
 		expect(results['Synthesize & Upload Audio']).toBe('inst-1.mp3')
 	})
 
-	it('passes an explicit retry/timeout config to the paid steps', async () => {
+	it('passes explicit retry/timeout configs to the text and audio steps', async () => {
 		const { step, configs } = recordingStep()
 		await processPreAlert(step, payload, 'inst-1', deps())
-		for (const name of ['Generate Text', 'Synthesize & Upload Audio']) {
-			expect(configs[name]).toEqual(PAID_STEP_CONFIG)
-		}
-		expect(PAID_STEP_CONFIG.retries.backoff).toBe('exponential')
+		expect(configs['Generate Text']).toEqual(TEXT_STEP_CONFIG)
+		expect(configs['Synthesize & Upload Audio']).toEqual(AUDIO_STEP_CONFIG)
+		expect(AUDIO_STEP_CONFIG.retries.backoff).toBe('exponential')
+	})
+
+	it('gives the audio step a timeout with headroom over the 40s OpenAI client timeout', () => {
+		const seconds = Number.parseInt(AUDIO_STEP_CONFIG.timeout, 10)
+		expect(seconds).toBeGreaterThanOrEqual(60)
 	})
 
 	it("passes the org's tts_template into text generation", async () => {
@@ -446,6 +451,48 @@ describe('processPreAlert', () => {
 	})
 
 	describe('spoken text limits', () => {
+		it('caps an oversized nature on its own so the location is still spoken', async () => {
+			const { step } = recordingStep()
+			const longNature = 'STRUCTURE FIRE '.repeat(30).trim()
+			const generator = createFakeGenerator()
+			const gen = vi.spyOn(generator, 'generateText')
+			const store = createInMemoryStore({ orgs: [org] })
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+			try {
+				await processPreAlert(
+					step,
+					{ ...payload, emailText: `${longNature} | 1704 HAWKEYE DR:BOONE | 42.0368,-93.868018` },
+					'inst-1',
+					deps({ store, generator }),
+				)
+				expect(warn).toHaveBeenCalledWith(
+					'pre-alert speech fields truncated',
+					expect.objectContaining({ fields: ['nature'] }),
+				)
+			} finally {
+				warn.mockRestore()
+			}
+			const spoken = gen.mock.calls[0][0]
+			expect(spoken.nature.length).toBeLessThanOrEqual(MAX_SPEECH_FIELD_LENGTH.nature)
+			expect(spoken.nature).toMatch(/FIRE$/)
+			expect(spoken.address).toBe('1704 HAWKEYE DR')
+			expect(spoken.city).toBe('BOONE')
+			// The stored record keeps the full parsed field.
+			expect((await store.latestAlerts('o1', 5))[0].nature).toBe(longNature)
+		})
+
+		it('does not touch fields within their caps', async () => {
+			const { step } = recordingStep()
+			const generator = createFakeGenerator()
+			const gen = vi.spyOn(generator, 'generateText')
+			await processPreAlert(step, payload, 'inst-1', deps({ generator }))
+			expect(gen.mock.calls[0][0]).toMatchObject({
+				nature: 'SICK PERSON',
+				address: '1704 HAWKEYE DR #APT 104',
+				city: 'BOONE',
+			})
+		})
+
 		it('truncates over-long text at a word boundary before synthesis, and logs it', async () => {
 			const { step } = recordingStep()
 			const long = 'Fire alarm. ' + 'very long business name '.repeat(40)
@@ -482,7 +529,7 @@ describe('processPreAlert', () => {
 			expect(synth).toHaveBeenCalledWith('Sick Person. In Boone.')
 		})
 
-		it.each([[''], ['   '], ['. . .']])(
+		it.each([[''], ['   '], ['. . .'], ['.'.repeat(5000)]])(
 			'fails non-retryably on blank text %j without synthesizing',
 			async (text) => {
 				const { step } = recordingStep()
@@ -492,8 +539,10 @@ describe('processPreAlert', () => {
 				const store = createInMemoryStore({ orgs: [org] })
 				await expect(
 					processPreAlert(step, payload, 'inst-1', deps({ store, generator, nonRetryable })),
-				).rejects.toThrow(/blank/)
+				).rejects.toThrow(/blank \(\d+ chars/)
 				expect(nonRetryable).toHaveBeenCalledOnce()
+				// The message reports the length, never the (unbounded) text.
+				expect(nonRetryable.mock.calls[0][0].length).toBeLessThan(100)
 				expect(synth).not.toHaveBeenCalled()
 				expect(await store.latestAlerts('o1', 5)).toEqual([])
 			},
@@ -501,7 +550,7 @@ describe('processPreAlert', () => {
 	})
 
 	describe('upstream API errors', () => {
-		it.each([400, 401, 403, 404, 422])(
+		it.each([400, 404, 413, 422])(
 			'treats a %i from speech synthesis as non-retryable and uploads nothing',
 			async (status) => {
 				const { step } = recordingStep()
@@ -518,7 +567,7 @@ describe('processPreAlert', () => {
 			},
 		)
 
-		it.each([408, 429, 500, 503])('leaves a %i retryable', async (status) => {
+		it.each([401, 403, 408, 429, 500, 503])('leaves a %i retryable', async (status) => {
 			const { step } = recordingStep()
 			const generator = createFakeGenerator()
 			const original = apiError(status)
@@ -545,7 +594,7 @@ describe('processPreAlert', () => {
 		it('treats a 4xx from text generation as non-retryable', async () => {
 			const { step } = recordingStep()
 			const generator = createFakeGenerator()
-			vi.spyOn(generator, 'generateText').mockRejectedValue(apiError(401))
+			vi.spyOn(generator, 'generateText').mockRejectedValue(apiError(400))
 			const synth = vi.spyOn(generator, 'synthesizeSpeech')
 			const nonRetryable = vi.fn((message: string) => new Error(message))
 			await expect(
