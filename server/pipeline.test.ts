@@ -39,6 +39,7 @@ const org: Organization = {
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 	allowed_senders: null,
+	pager_tone_sets: null,
 	alert_cap_hourly: null,
 	alert_cap_monthly: null,
 }

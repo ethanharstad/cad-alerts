@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from './announcer'
+import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS, DEFAULT_PREEMPT_HOLD_MS } from './announcer'
 import type { Alert } from '../../shared/types'
 
 const NOW = 1_000_000_000
@@ -42,7 +42,7 @@ function controllableSpeaker() {
 }
 
 // Fixed clock, default window — the shape most tests want.
-const announcerAt = (speak: (a: Alert) => Promise<void>) =>
+const announcerAt = (speak: (a: Alert, signal: AbortSignal) => Promise<void>) =>
 	createAlertAnnouncer(speak, { now: () => NOW })
 
 describe('createAlertAnnouncer', () => {
@@ -184,5 +184,86 @@ describe('createAlertAnnouncer', () => {
 		await finishOne()
 		await new Promise((resolve) => setTimeout(resolve, 0))
 		expect(announcer.isBusy).toBe(false)
+	})
+
+	describe('preempt (pager tones heard)', () => {
+		// A speaker that plays until finished by hand or aborted by its signal.
+		function abortableSpeaker() {
+			const spoken: string[] = []
+			const aborted: string[] = []
+			let finish: (() => void) | null = null
+			const speak = (a: Alert, signal: AbortSignal) => {
+				spoken.push(a.alert_id)
+				return new Promise<void>((resolve) => {
+					finish = resolve
+					signal.addEventListener('abort', () => {
+						aborted.push(a.alert_id)
+						resolve()
+					})
+				})
+			}
+			const finishOne = async () => {
+				finish?.()
+				await new Promise((resolve) => setTimeout(resolve, 0))
+			}
+			return { spoken, aborted, speak, finishOne }
+		}
+
+		it('cuts off the alert being spoken and does not replay it', async () => {
+			const { spoken, aborted, speak } = abortableSpeaker()
+			const announcer = announcerAt(speak)
+			announcer.announce(alert('pre', NOW - 1000))
+			announcer.preempt()
+			await new Promise((resolve) => setTimeout(resolve, 0))
+			expect(aborted).toEqual(['pre'])
+			expect(spoken).toEqual(['pre'])
+			expect(announcer.isBusy).toBe(false)
+		})
+
+		it('drops what is waiting', async () => {
+			const { spoken, speak } = abortableSpeaker()
+			const announcer = announcerAt(speak)
+			announcer.announce(alert('playing', NOW - 2000))
+			announcer.announce(alert('waiting', NOW - 1000))
+			announcer.preempt()
+			await new Promise((resolve) => setTimeout(resolve, 0))
+			expect(spoken).toEqual(['playing'])
+		})
+
+		it('holds off alerts arriving during the hold, then speaks again after it', () => {
+			const { spoken, speak } = abortableSpeaker()
+			let now = NOW
+			const announcer = createAlertAnnouncer(speak, { now: () => now })
+			announcer.preempt()
+			expect(announcer.isHolding).toBe(true)
+
+			// The CAD pre-alert lands a few seconds after the tones: not read out.
+			now += 5000
+			announcer.announce(alert('late', now))
+			expect(spoken).toEqual([])
+
+			now += DEFAULT_PREEMPT_HOLD_MS
+			expect(announcer.isHolding).toBe(false)
+			announcer.announce(alert('next call', now))
+			expect(spoken).toEqual(['next call'])
+		})
+
+		it('extends the hold when tones are heard again, never shortens it', () => {
+			let now = NOW
+			const announcer = createAlertAnnouncer(abortableSpeaker().speak, { now: () => now })
+			announcer.preempt(60_000)
+			now += 50_000
+			announcer.preempt(60_000)
+			now += 20_000
+			expect(announcer.isHolding).toBe(true)
+			announcer.preempt(1000)
+			expect(announcer.isHolding).toBe(true)
+		})
+
+		it('is harmless with nothing playing', () => {
+			const announcer = announcerAt(abortableSpeaker().speak)
+			expect(() => announcer.preempt()).not.toThrow()
+			expect(announcer.isBusy).toBe(false)
+		})
 	})
 })

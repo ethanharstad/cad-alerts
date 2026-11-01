@@ -19,6 +19,7 @@ const orgRow: Organization = {
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 	allowed_senders: null,
+	pager_tone_sets: null,
 	alert_cap_hourly: null,
 	alert_cap_monthly: null,
 }
@@ -90,6 +91,7 @@ describe('GET /api/org/:organizationKey authentication', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -392,6 +394,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 		expect(body).not.toHaveProperty('access_key')
 	})
@@ -473,6 +476,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 				quiet_hours_start: 22 * 60,
 				quiet_hours_end: 6 * 60,
 				allowed_senders: null,
+				pager_tone_sets: null,
 			},
 		)
 		expect(res.status).toBe(200)
@@ -482,6 +486,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_hours_start: 1320,
 			quiet_hours_end: 360,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 	})
 
@@ -492,6 +497,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_hours_start: 1320,
 			quiet_hours_end: 360,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 		const res = await put(app, 'boone', { Authorization: 'Bearer abcdef' }, {})
 		expect(res.status).toBe(200)
@@ -501,6 +507,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 	})
 
@@ -534,6 +541,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 				quiet_hours_start: null,
 				quiet_hours_end: null,
 				allowed_senders: null,
+				pager_tone_sets: null,
 			},
 		)
 		const res = await app.request(
@@ -555,6 +563,7 @@ describe('PUT /api/org/:organizationKey settings', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 	})
 
@@ -590,6 +599,41 @@ describe('PUT /api/org/:organizationKey settings', () => {
 	it('rejects an allowlist with too many entries', async () => {
 		const many = Array.from({ length: 51 }, (_, i) => `cad${i}@county.gov`).join('\n')
 		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { allowed_senders: many })
+		expect(res.status).toBe(400)
+	})
+
+	it('stores normalized pager tone sets', async () => {
+		const res = await put(
+			appWith([orgRow]),
+			'boone',
+			{ Authorization: 'Bearer abcdef' },
+			{ pager_tone_sets: ' 330.5 569.1  Station 1 \n\n1092.4,832.5\n330.5 569.1 dup' },
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			pager_tone_sets: '330.5 569.1 Station 1\n1092.4 832.5',
+		})
+	})
+
+	it('clears pager tone sets when blank', async () => {
+		const res = await put(appWith([{ ...orgRow, pager_tone_sets: '330.5 569.1' }]), 'boone', { Authorization: 'Bearer abcdef' }, { pager_tone_sets: ' ' })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ pager_tone_sets: null })
+	})
+
+	it.each([
+		['one tone only', '330.5'],
+		['a tone out of range', '330.5 9000'],
+		['tones too close together', '330.5 332'],
+		['a non-string', ['330.5 569.1']],
+	])('rejects pager tone sets with %s', async (_label, value) => {
+		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { pager_tone_sets: value })
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects too many pager tone sets', async () => {
+		const many = Array.from({ length: 21 }, (_, i) => `${300 + i * 20} 2000`).join('\n')
+		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { pager_tone_sets: many })
 		expect(res.status).toBe(400)
 	})
 

@@ -20,6 +20,11 @@ import {
 	formatAllowedSenders,
 	MAX_ALLOWED_SENDERS,
 } from '../shared/senders';
+import {
+	parsePagerToneSets,
+	formatPagerToneSets,
+	MAX_PAGER_TONE_SETS,
+} from '../shared/pagerTones';
 
 type Variables = { organization: Organization; store: AlertStore };
 
@@ -190,6 +195,20 @@ export function createApp(
 			});
 		}
 
+		// Pager tone sets: one `<A Hz> <B Hz> [label]` per line. As with senders, a
+		// bad line is rejected rather than dropped — a lost set would quietly stop
+		// that page from cutting off pre-alerts.
+		if (body.pager_tone_sets !== undefined && body.pager_tone_sets !== null && typeof body.pager_tone_sets !== 'string') {
+			throw new HTTPException(400, { message: 'pager_tone_sets must be a string' });
+		}
+		const toneSets = parsePagerToneSets(body.pager_tone_sets as string | null | undefined);
+		if (toneSets.errors.length > 0) {
+			throw new HTTPException(400, { message: `Invalid pager tone set(s): ${toneSets.errors.join('; ')}` });
+		}
+		if (toneSets.sets.length > MAX_PAGER_TONE_SETS) {
+			throw new HTTPException(400, { message: `At most ${MAX_PAGER_TONE_SETS} pager tone sets` });
+		}
+
 		const settings: OrgSettings = {
 			default_city: normalize(body.default_city),
 			default_state: normalize(body.default_state),
@@ -200,6 +219,7 @@ export function createApp(
 			quiet_hours_start: quietStart as number | null,
 			quiet_hours_end: quietEnd as number | null,
 			allowed_senders: formatAllowedSenders(senders),
+			pager_tone_sets: formatPagerToneSets(toneSets.sets),
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can

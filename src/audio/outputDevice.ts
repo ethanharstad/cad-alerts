@@ -29,17 +29,29 @@ export function supportsOutputSelection(): boolean {
  * "System default" is already the `''` choice.
  */
 export async function listOutputDevices(): Promise<OutputDevice[]> {
+	return listDevices('audiooutput')
+}
+
+/**
+ * The real devices of one kind, without the `default`/`communications` aliases
+ * or entries whose ids the browser is still withholding. Unlabelled devices are
+ * named by position, using `fallbackName`.
+ */
+export async function listDevices(
+	kind: MediaDeviceKind,
+	fallbackName = 'Speaker',
+): Promise<OutputDevice[]> {
 	if (!navigator.mediaDevices?.enumerateDevices) return []
 	const devices = await navigator.mediaDevices.enumerateDevices()
 	return devices
 		.filter(
 			(d) =>
-				d.kind === 'audiooutput' &&
+				d.kind === kind &&
 				d.deviceId !== '' &&
 				d.deviceId !== 'default' &&
 				d.deviceId !== 'communications',
 		)
-		.map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Speaker ${i + 1}` }))
+		.map((d, i) => ({ deviceId: d.deviceId, label: d.label || `${fallbackName} ${i + 1}` }))
 }
 
 /**
@@ -68,9 +80,22 @@ export async function resolveOutputDevice(
 ): Promise<string | null | undefined> {
 	if (!deviceId) return ''
 	if (!supportsOutputSelection()) return undefined
+	return matchSavedDevice(listOutputDevices, deviceId, label)
+}
+
+/**
+ * The shared half of {@link resolveOutputDevice}: find a saved device among
+ * `list()`, by id or else by its one matching label.
+ */
+export async function matchSavedDevice(
+	list: () => Promise<OutputDevice[]>,
+	deviceId: string,
+	label: string,
+): Promise<string | null | undefined> {
+	if (!deviceId) return ''
 	let devices: OutputDevice[]
 	try {
-		devices = await listOutputDevices()
+		devices = await list()
 	} catch {
 		return undefined
 	}

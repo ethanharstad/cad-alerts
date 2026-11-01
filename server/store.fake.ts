@@ -36,6 +36,7 @@ export function createInMemoryStore(seed: InMemorySeed = {}): AlertStore {
 				org.quiet_hours_start = settings.quiet_hours_start;
 				org.quiet_hours_end = settings.quiet_hours_end;
 				org.allowed_senders = settings.allowed_senders;
+				org.pager_tone_sets = settings.pager_tone_sets;
 			}
 		},
 		async latestAlerts(orgId, limit) {

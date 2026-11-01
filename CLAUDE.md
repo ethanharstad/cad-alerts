@@ -41,6 +41,15 @@ organization through an authenticated API.
   alert, plus per-org quiet hours with their own tone. Orgs store only tone ids;
   to add a tone, drop the file in `public/tones/` and register it in
   `ALERT_TONES` (never rename an id in use).
+- **Pager preemption** (`shared/pagerTones.ts`, `src/audio/pagerToneDetector.ts`,
+  `src/audio/pagerMonitor.ts`): a dashboard can listen to the pager audio (a
+  per-browser input device) and decode two-tone sequential pages. When one of the
+  org's `pager_tone_sets` (`<A Hz> <B Hz> [label]` per line; only the
+  department's own — county dispatch shares the channel) is heard, the
+  announcer's `preempt()` aborts the playing pre-alert (never replayed) and
+  holds further announcements for `DEFAULT_PREEMPT_HOLD_MS`. The detector is a
+  pure Goertzel decoder tested on synthesized audio; the monitor is the thin
+  getUserMedia/AudioWorklet glue (speech processing must stay off).
 - **Self-update** (`shared/build.ts`, `src/update/reload.ts`): `vite build`
   stamps one build id (`GITHUB_SHA`) into both the SPA and the Worker. Every
   API response carries it as `X-Build-Id`; a dashboard that sees a different id

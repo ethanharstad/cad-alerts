@@ -51,6 +51,12 @@ export interface Organization {
 	 */
 	allowed_senders: string | null
 	/**
+	 * The department's pager tone sets: newline-separated `<A Hz> <B Hz> [label]`
+	 * (see `shared/pagerTones.ts`). A dashboard listening to the pager audio cuts
+	 * a pre-alert off when it hears one. Null means none configured.
+	 */
+	pager_tone_sets: string | null
+	/**
 	 * Admin-only soft cap on alerts (new or revised) per rolling hour. Going over
 	 * is reported but the alert is still delivered. Null means no cap. Set by
 	 * hand in the database; never sent to or accepted from clients.
@@ -86,6 +92,7 @@ export interface OrgSettings {
 	quiet_hours_start: number | null
 	quiet_hours_end: number | null
 	allowed_senders: string | null
+	pager_tone_sets: string | null
 }
 
 export interface Alert {

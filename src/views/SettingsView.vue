@@ -111,6 +111,61 @@
           </p>
         </div>
 
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input
+              id="pagerMonitorEnabled"
+              v-model="settingsStore.pagerMonitorEnabled"
+              type="checkbox"
+              :disabled="!pagerMonitorSupported"
+            />
+            <span>Cut off pre-alerts when the pager tones out</span>
+          </label>
+          <p class="help-text">
+            Listens to the pager audio wired into this computer (the pager's or receiver's
+            audio out, into a line-in or USB sound card). When one of the organization's
+            pager tone sets is heard, a pre-alert that is playing stops, and no pre-alert is
+            read out for a minute while dispatch is on the air. Needs auto-play on, and tone
+            sets in Organization Settings below.
+            <template v-if="!pagerMonitorSupported">
+              This browser can't listen to an audio input.
+            </template>
+          </p>
+        </div>
+
+        <div v-if="settingsStore.pagerMonitorEnabled" class="form-group">
+          <label for="pagerInputDevice">Pager Audio Input</label>
+          <select
+            id="pagerInputDevice"
+            :value="settingsStore.pagerInputDeviceId"
+            @change="selectInputDevice(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">System default input</option>
+            <option v-for="device in inputDevices" :key="device.deviceId" :value="device.deviceId">
+              {{ device.label }}
+            </option>
+            <option v-if="savedInputMissing" :value="settingsStore.pagerInputDeviceId">
+              {{ settingsStore.pagerInputDeviceLabel || 'Saved input' }} (not found)
+            </option>
+          </select>
+          <button
+            v-if="inputDevices.length === 0"
+            type="button"
+            class="link-button"
+            @click="findInputDevices"
+          >
+            Find input devices
+          </button>
+          <p v-if="inputDeviceMessage" class="help-text template-error">
+            {{ inputDeviceMessage }}
+          </p>
+          <p class="help-text">
+            The input the pager audio is plugged into. Use a direct line feed rather than a
+            microphone near the PA, so the dashboard's own alerts never reach it. To check
+            it, use Test Listening under Pager Tone Sets below.
+          </p>
+        </div>
+
 
         <div class="button-group">
           <button type="submit" class="btn-primary" :disabled="saving">
@@ -274,6 +329,60 @@
           </div>
 
           <div class="form-group">
+            <label for="pagerToneSets">Pager Tone Sets</label>
+            <textarea
+              id="pagerToneSets"
+              v-model="pagerToneSets"
+              rows="3"
+              class="template-input"
+              placeholder="e.g. 330.5 569.1 Station 1&#10;1092.4 832.5 All call"
+            ></textarea>
+            <p v-for="err in pagerToneErrors" :key="err" class="help-text template-error">
+              {{ err }}
+            </p>
+            <p class="help-text">
+              The two-tone pages dispatch sends this department, one per line: tone A and
+              tone B in Hz, then an optional name (<code>330.5 569.1 Station 1</code>). List
+              each page that should cut a pre-alert off — your own, all-calls, mutual-aid
+              groups. Other agencies' tones on the same channel are ignored. Tones must match
+              within about 1.5%. Leave blank to turn the cut-off off.
+            </p>
+
+            <div class="pager-test">
+              <button
+                type="button"
+                class="btn-secondary btn-preview"
+                :disabled="!pagerMonitorSupported || (!pagerTest && parsedPagerTones.sets.length === 0)"
+                @click="togglePagerTest"
+              >
+                {{ pagerTest ? '■ Stop listening' : '🎧 Test listening' }}
+              </button>
+              <template v-if="pagerTest">
+                <span class="pager-test-status">{{ pagerTestStatus }}</span>
+                <meter
+                  class="pager-level"
+                  min="-60"
+                  max="0"
+                  low="-40"
+                  high="-6"
+                  optimum="-20"
+                  :value="pagerLevel"
+                  :title="`${Math.round(pagerLevel)} dBFS`"
+                ></meter>
+              </template>
+            </div>
+            <ul v-if="pagerTestLog.length > 0" class="pager-test-log">
+              <li v-for="(entry, i) in pagerTestLog" :key="i">{{ entry }}</li>
+            </ul>
+            <p class="help-text">
+              Test listening uses this browser's pager audio input and the tone sets as typed
+              above (saved or not). Have dispatch send a test page, or play the tones into the
+              input: each configured tone heard is listed, and a full page shows as a match.
+              Aim for a level mostly in the green while audio is playing.
+            </p>
+          </div>
+
+          <div class="form-group">
             <label for="ttsTemplate">Text-to-Speech Template</label>
             <p class="help-text">
               Click a token to insert it, and add your own text around it. Write
@@ -329,7 +438,7 @@
             <button
               type="submit"
               class="btn-primary"
-              :disabled="orgSaving || !templateValidation.valid || invalidSenders.length > 0"
+              :disabled="orgSaving || !templateValidation.valid || invalidSenders.length > 0 || pagerToneErrors.length > 0"
             >
               {{ orgSaving ? 'Saving…' : 'Save Organization Settings' }}
             </button>
@@ -345,7 +454,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { getOrganization, updateOrganizationSettings, ApiError } from '@/api/client'
 import type { PublicOrganization } from '../../shared/types'
@@ -373,12 +482,26 @@ import {
   formatAllowedSenders,
   MAX_ALLOWED_SENDERS,
 } from '../../shared/senders'
+import {
+  parsePagerToneSets,
+  formatPagerToneSets,
+  describePagerToneSet,
+  MAX_PAGER_TONE_SETS,
+} from '../../shared/pagerTones'
 import { playClip } from '@/audio/play'
+import {
+  startPagerMonitor,
+  supportsPagerMonitor,
+  type PagerMonitor,
+  type PagerMonitorStatus,
+} from '@/audio/pagerMonitor'
 import {
   supportsOutputSelection,
   listOutputDevices,
   requestOutputAccess,
   resolveOutputDevice,
+  listDevices,
+  matchSavedDevice,
   type OutputDevice,
 } from '@/audio/outputDevice'
 
@@ -499,6 +622,57 @@ const testOutputDevice = () => {
   })
 }
 
+// ---- Pager audio input (this browser only) ----
+
+const pagerMonitorSupported = supportsPagerMonitor()
+const inputDevices = ref<OutputDevice[]>([])
+const inputDeviceMessage = ref<string>('')
+
+const listInputDevices = () => listDevices('audioinput', 'Input')
+
+const savedInputMissing = computed(
+  () =>
+    !!settingsStore.pagerInputDeviceId &&
+    inputDevices.value.length > 0 &&
+    !inputDevices.value.some(d => d.deviceId === settingsStore.pagerInputDeviceId),
+)
+
+const refreshInputDevices = async () => {
+  try {
+    inputDevices.value = await listInputDevices()
+  } catch {
+    inputDevices.value = []
+  }
+  const resolved = await matchSavedDevice(
+    listInputDevices,
+    settingsStore.pagerInputDeviceId,
+    settingsStore.pagerInputDeviceLabel,
+  )
+  if (resolved) settingsStore.pagerInputDeviceId = resolved
+}
+
+const findInputDevices = async () => {
+  inputDeviceMessage.value = ''
+  try {
+    await requestOutputAccess()
+  } catch {
+    inputDeviceMessage.value =
+      'The browser did not allow microphone access, so the pager audio cannot be heard.'
+    return
+  }
+  await refreshInputDevices()
+  if (inputDevices.value.length === 0) {
+    inputDeviceMessage.value = 'No audio inputs were found.'
+  }
+}
+
+const selectInputDevice = (deviceId: string) => {
+  settingsStore.pagerInputDeviceId = deviceId
+  settingsStore.pagerInputDeviceLabel =
+    inputDevices.value.find(d => d.deviceId === deviceId)?.label ??
+    (deviceId ? settingsStore.pagerInputDeviceLabel : '')
+}
+
 // ---- Organization Settings (server-side, per-organization) ----
 // These live on the organization row, unlike the device settings above which
 // are local to this browser. They are loaded from and saved to the API.
@@ -523,6 +697,81 @@ const invalidSenders = computed(() => invalidSenderEntries(parsedSenders.value))
 const senderCount = computed(() => parsedSenders.value.length)
 
 const quietHoursSet = computed(() => !!quietStart.value && !!quietEnd.value)
+
+// Pager tone sets as typed, one `A B [name]` per line.
+const pagerToneSets = ref<string>('')
+const parsedPagerTones = computed(() => parsePagerToneSets(pagerToneSets.value))
+const pagerToneErrors = computed(() => {
+  const { sets, errors } = parsedPagerTones.value
+  return sets.length > MAX_PAGER_TONE_SETS
+    ? [...errors, `List at most ${MAX_PAGER_TONE_SETS} tone sets`]
+    : errors
+})
+
+// ---- Test listening: run the pager monitor here, against the typed sets ----
+
+const pagerTest = ref<PagerMonitor | null>(null)
+const pagerTestState = ref<PagerMonitorStatus | 'starting'>('starting')
+const pagerTestDetail = ref<string>('')
+const pagerLevel = ref<number>(-60)
+const pagerTestLog = ref<string[]>([])
+
+const pagerTestStatus = computed(() => {
+  switch (pagerTestState.value) {
+    case 'listening':
+      return 'Listening…'
+    case 'suspended':
+      return 'Waiting for the browser — click anywhere'
+    case 'unavailable':
+      return pagerTestDetail.value || 'Input unavailable'
+    case 'starting':
+      return 'Starting…'
+    default:
+      return ''
+  }
+})
+
+const logPagerTest = (entry: string) => {
+  const time = new Date().toLocaleTimeString()
+  pagerTestLog.value = [`${time} — ${entry}`, ...pagerTestLog.value].slice(0, 12)
+}
+
+const stopPagerTest = () => {
+  pagerTest.value?.stop()
+  pagerTest.value = null
+}
+
+const togglePagerTest = async () => {
+  if (pagerTest.value) {
+    stopPagerTest()
+    return
+  }
+  pagerTestLog.value = []
+  pagerTestState.value = 'starting'
+  pagerLevel.value = -60
+  const monitor = await startPagerMonitor({
+    deviceId: settingsStore.pagerInputDeviceId,
+    sets: parsedPagerTones.value.sets,
+    onMatch: set => logPagerTest(`Page matched: ${describePagerToneSet(set)}`),
+    onTone: hz => logPagerTest(`Tone heard: ${hz} Hz`),
+    onStatus: (status, detail) => {
+      pagerTestState.value = status
+      pagerTestDetail.value = detail ?? ''
+    },
+    onLevel: dbfs => {
+      pagerLevel.value = Math.max(-60, dbfs)
+    },
+  })
+  pagerTest.value = monitor
+  pagerTestState.value = monitor.status
+  // Opening the input is what reveals device labels; refresh the list now.
+  void refreshInputDevices()
+}
+
+// The test's audio processing may wait for a gesture, like any page audio.
+const resumePagerTest = () => {
+  if (pagerTestState.value === 'suspended') void pagerTest.value?.resume()
+}
 
 const previewTone = (id: string) => {
   const tone = findTone(id)
@@ -562,6 +811,7 @@ const applyOrg = (org: PublicOrganization) => {
   quietStart.value = org.quiet_hours_start == null ? '' : formatTimeOfDay(org.quiet_hours_start)
   quietEnd.value = org.quiet_hours_end == null ? '' : formatTimeOfDay(org.quiet_hours_end)
   allowedSenders.value = org.allowed_senders ?? ''
+  pagerToneSets.value = org.pager_tone_sets ?? ''
   loadedKey.value = org.org_key
 }
 
@@ -655,6 +905,12 @@ const saveOrgSettings = async () => {
     return
   }
 
+  if (pagerToneErrors.value.length > 0) {
+    orgMessage.value = `Pager tone sets: ${pagerToneErrors.value.join('; ')}`
+    orgMessageType.value = 'error'
+    return
+  }
+
   orgSaving.value = true
   orgMessage.value = ''
   try {
@@ -672,6 +928,7 @@ const saveOrgSettings = async () => {
         quiet_hours_start: quietStartMinutes,
         quiet_hours_end: quietEndMinutes,
         allowed_senders: formatAllowedSenders(parsedSenders.value),
+        pager_tone_sets: formatPagerToneSets(parsedPagerTones.value.sets),
       },
     )
     applyOrg(org)
@@ -697,6 +954,13 @@ const saveOrgSettings = async () => {
 onMounted(() => {
   void loadOrgSettings()
   if (outputSelectionSupported) void refreshOutputDevices()
+  if (pagerMonitorSupported) void refreshInputDevices()
+  document.addEventListener('pointerdown', resumePagerTest)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', resumePagerTest)
+  stopPagerTest()
 })
 
 const clearSettings = () => {
@@ -1010,6 +1274,31 @@ textarea.template-input:focus {
   color: #856404;
   border: 1px solid #ffeeba;
   border-radius: 4px;
+}
+
+.pager-test {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.pager-test-status {
+  font-size: 0.875rem;
+}
+
+.pager-level {
+  flex: 1;
+  min-width: 8rem;
+  height: 1rem;
+}
+
+.pager-test-log {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-family: monospace;
+  font-size: 0.875rem;
 }
 
 .link-button {

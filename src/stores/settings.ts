@@ -15,6 +15,12 @@ export const useSettingsStore = defineStore('settings', () => {
   // is kept so a device that is unplugged can still be named in the UI.
   const audioOutputDeviceId = persisted('audioOutputDeviceId', '')
   const audioOutputDeviceLabel = persisted('audioOutputDeviceLabel', '')
+  // Listen to the pager audio on this computer and cut a pre-alert off when the
+  // department's tones are heard. The input is per browser, like the output;
+  // '' is the system default input.
+  const pagerMonitorEnabled = persisted('pagerMonitorEnabled', false)
+  const pagerInputDeviceId = persisted('pagerInputDeviceId', '')
+  const pagerInputDeviceLabel = persisted('pagerInputDeviceLabel', '')
 
   // Reset to defaults; the persistence watch writes the defaults back, so a
   // reload reads them again.
@@ -25,6 +31,9 @@ export const useSettingsStore = defineStore('settings', () => {
     autoPlayNewAlerts.value = false
     audioOutputDeviceId.value = ''
     audioOutputDeviceLabel.value = ''
+    pagerMonitorEnabled.value = false
+    pagerInputDeviceId.value = ''
+    pagerInputDeviceLabel.value = ''
   }
 
   return {
@@ -34,6 +43,9 @@ export const useSettingsStore = defineStore('settings', () => {
     autoPlayNewAlerts,
     audioOutputDeviceId,
     audioOutputDeviceLabel,
+    pagerMonitorEnabled,
+    pagerInputDeviceId,
+    pagerInputDeviceLabel,
     clearSettings,
   }
 })
