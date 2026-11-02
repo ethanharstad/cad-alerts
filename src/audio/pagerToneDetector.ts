@@ -37,7 +37,11 @@ export interface PagerToneDetectorOptions {
 	minPurity?: number
 	/** RMS (full scale = 1) below which a block is treated as silence. */
 	minLevel?: number
-	/** How long tone A must last. Quick Call II sends it for about 1 s. */
+	/**
+	 * How long tone A must last. Quick Call II sends it for about 1 s, but some
+	 * encoders are set as short as 0.5 s, and a run is measured in whole blocks
+	 * (up to ~150 ms for low tones), so the bar sits well under 0.5 s.
+	 */
 	minToneAMs?: number
 	/** How long tone B must be held before cutting in. */
 	minToneBMs?: number
@@ -49,7 +53,7 @@ export interface PagerToneDetectorOptions {
 
 export const DEFAULT_MIN_PURITY = 0.4
 export const DEFAULT_MIN_LEVEL = 0.003 // about −50 dBFS
-export const DEFAULT_MIN_TONE_A_MS = 500
+export const DEFAULT_MIN_TONE_A_MS = 350
 export const DEFAULT_MIN_TONE_B_MS = 600
 export const DEFAULT_MAX_GAP_MS = 400
 export const DEFAULT_DROPOUT_MS = 150
@@ -79,7 +83,8 @@ interface Tracker {
 	count: number
 	s1: number
 	s2: number
-	energy: number
+	/** The shared running sum of squares when this tracker's block began. */
+	energyAtStart: number
 	run: Run | null
 }
 
@@ -113,7 +118,7 @@ export function createPagerToneDetector(options: PagerToneDetectorOptions): Page
 				count: 0,
 				s1: 0,
 				s2: 0,
-				energy: 0,
+				energyAtStart: 0,
 				run: null,
 			})
 		}
@@ -130,6 +135,12 @@ export function createPagerToneDetector(options: PagerToneDetectorOptions): Page
 	let prevOut = 0
 
 	let sampleIndex = 0
+	// Running sum of squares of the filtered signal, shared by every tracker: a
+	// block's energy is the difference across it, so the sum is accumulated
+	// once per sample rather than once per tracker.
+	let sumSquares = 0
+	// Rebased now and then so it never grows large enough to lose precision.
+	const REBASE_AT = 1e6
 
 	const checkSets = (b: Tracker) => {
 		const bRun = b.run!
@@ -151,16 +162,17 @@ export function createPagerToneDetector(options: PagerToneDetectorOptions): Page
 
 	const endBlock = (t: Tracker) => {
 		const n = t.blockLength
+		const energy = sumSquares - t.energyAtStart
 		const power = t.s1 * t.s1 + t.s2 * t.s2 - t.coeff * t.s1 * t.s2
 		// A pure sine on frequency gives power = (n/2)·energy, so purity ≈ 1.
-		const purity = t.energy > 0 ? power / ((n / 2) * t.energy) : 0
-		const rms = Math.sqrt(t.energy / n)
+		const purity = energy > 0 ? power / ((n / 2) * energy) : 0
+		const rms = Math.sqrt(Math.max(0, energy) / n)
 		const end = (sampleIndex / fs) * 1000
 		const start = end - t.blockMs
 		t.count = 0
 		t.s1 = 0
 		t.s2 = 0
-		t.energy = 0
+		t.energyAtStart = sumSquares
 
 		if (rms < minLevel || purity < minPurity) return
 		if (t.run && start - t.run.end <= dropoutMs) {
@@ -183,13 +195,17 @@ export function createPagerToneDetector(options: PagerToneDetectorOptions): Page
 				prevIn = x
 				prevOut = y
 				sampleIndex++
+				sumSquares += y * y
 				for (const t of trackerList) {
 					const s0 = y + t.coeff * t.s1 - t.s2
 					t.s2 = t.s1
 					t.s1 = s0
-					t.energy += y * y
 					if (++t.count === t.blockLength) endBlock(t)
 				}
+			}
+			if (sumSquares > REBASE_AT) {
+				for (const t of trackerList) t.energyAtStart -= sumSquares
+				sumSquares = 0
 			}
 		},
 	}

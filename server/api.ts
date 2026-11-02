@@ -197,7 +197,10 @@ export function createApp(
 
 		// Pager tone sets: one `<A Hz> <B Hz> [label]` per line. As with senders, a
 		// bad line is rejected rather than dropped — a lost set would quietly stop
-		// that page from cutting off pre-alerts.
+		// that page from cutting off pre-alerts. Unlike the older fields, an
+		// omitted value keeps what is stored: a settings page loaded from a build
+		// that predates this field must not wipe the sets when it saves. Send null
+		// or blank to clear them.
 		if (body.pager_tone_sets !== undefined && body.pager_tone_sets !== null && typeof body.pager_tone_sets !== 'string') {
 			throw new HTTPException(400, { message: 'pager_tone_sets must be a string' });
 		}
@@ -219,7 +222,10 @@ export function createApp(
 			quiet_hours_start: quietStart as number | null,
 			quiet_hours_end: quietEnd as number | null,
 			allowed_senders: formatAllowedSenders(senders),
-			pager_tone_sets: formatPagerToneSets(toneSets.sets),
+			pager_tone_sets:
+				body.pager_tone_sets === undefined
+					? organization.pager_tone_sets
+					: formatPagerToneSets(toneSets.sets),
 		};
 
 		// Reject templates that reference unknown tokens, so a bad template can

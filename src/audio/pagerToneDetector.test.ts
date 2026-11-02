@@ -134,7 +134,26 @@ describe('createPagerToneDetector', () => {
 	})
 
 	it('ignores a tone A too short to be a page', () => {
-		expect(detect(render(page(STATION_1, { aMs: 250 }))).matches).toEqual([])
+		expect(detect(render(page(STATION_1, { aMs: 150 }))).matches).toEqual([])
+	})
+
+	it('recognizes a 0.5 s tone A at a low pitch, however it falls across blocks', () => {
+		// 288.5 Hz is near the bottom of the tone tables, where blocks are longest.
+		const low: PagerToneSet = { a: 288.5, b: 569.1, label: 'Low' }
+		for (let offsetMs = 0; offsetMs < 160; offsetMs += 10) {
+			const audio = render([{ silence: offsetMs }, ...page(low, { aMs: 500 })])
+			expect(detect(audio, [low]).matches, `offset ${offsetMs} ms`).toEqual(['Low'])
+		}
+	})
+
+	it('keeps its precision over a long run', () => {
+		// Hours of loud audio push the running energy sum through many rebases.
+		const matches: string[] = []
+		const d = createPagerToneDetector({ sampleRate: FS, sets: [STATION_1], onMatch: (s) => matches.push(s.label) })
+		const loud = render([{ noise: 1000, amp: 1.8 }])
+		for (let i = 0; i < 600; i++) d.process(loud)
+		d.process(render(page(STATION_1)))
+		expect(matches).toEqual(['Station 1'])
 	})
 
 	it('ignores tone A followed by B after a long gap', () => {

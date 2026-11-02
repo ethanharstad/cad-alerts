@@ -1,5 +1,6 @@
 import type { PagerToneSet } from '../../shared/pagerTones'
 import { createPagerToneDetector } from './pagerToneDetector'
+import { listDevices, matchSavedDevice } from './outputDevice'
 
 /**
  * Listens to the pager audio — the pager's or receiver's audio out, wired into
@@ -12,6 +13,8 @@ import { createPagerToneDetector } from './pagerToneDetector'
  */
 
 export type PagerMonitorStatus =
+	/** Opening the input. */
+	| 'starting'
 	/** Capturing and decoding. */
 	| 'listening'
 	/**
@@ -26,6 +29,14 @@ export type PagerMonitorStatus =
 export interface PagerMonitorOptions {
 	/** Input device id; '' uses the system default input. */
 	deviceId: string
+	/**
+	 * The saved device's label. Browsers re-issue device ids (when site data is
+	 * cleared, say), so a saved id that no longer matches falls back to the one
+	 * input with this label.
+	 */
+	deviceLabel?: string
+	/** Called when the saved id was re-issued, so the caller can store the new one. */
+	onDeviceIdChange?: (deviceId: string) => void
 	sets: readonly PagerToneSet[]
 	onMatch: (set: PagerToneSet) => void
 	onTone?: (hz: number) => void
@@ -38,6 +49,11 @@ export interface PagerMonitor {
 	readonly status: PagerMonitorStatus
 	/** Try to start audio processing again; call from a user gesture. */
 	resume(): Promise<void>
+	/**
+	 * Release the input and stop decoding. Safe at any time — including while
+	 * the input is still opening, in which case whatever it opens is released as
+	 * soon as it arrives — and safe to call twice.
+	 */
 	stop(): void
 }
 
@@ -85,19 +101,28 @@ registerProcessor('pager-tap', PagerTap)
 const LEVEL_INTERVAL_MS = 100
 
 /**
- * Open the input and start decoding. Never throws: a failure is reported as
- * status `unavailable` with a reason, so a dashboard can say so and carry on.
+ * Start listening. Returns at once, with status `starting`, and opens the input
+ * in the background, so the caller always holds a handle it can stop — there is
+ * no window in which a start can be superseded or abandoned and leave the
+ * microphone open. Never throws: a failure is reported as status `unavailable`
+ * with a reason, so a dashboard can say so and carry on.
  */
-export async function startPagerMonitor(options: PagerMonitorOptions): Promise<PagerMonitor> {
-	let status: PagerMonitorStatus = 'unavailable'
+export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
+	let status: PagerMonitorStatus = 'starting'
 	let stopped = false
 	let inputLost = false
 	let stream: MediaStream | null = null
 	let ctx: AudioContext | null = null
 
 	const setStatus = (next: PagerMonitorStatus, detail?: string) => {
+		if (stopped && next !== 'stopped') return
 		status = next
 		options.onStatus?.(next, detail)
+	}
+
+	const release = () => {
+		for (const track of stream?.getTracks() ?? []) track.stop()
+		void ctx?.close().catch(() => {})
 	}
 
 	const monitor: PagerMonitor = {
@@ -105,7 +130,7 @@ export async function startPagerMonitor(options: PagerMonitorOptions): Promise<P
 			return status
 		},
 		async resume() {
-			if (ctx && ctx.state === 'suspended') {
+			if (!stopped && ctx && ctx.state === 'suspended') {
 				try {
 					await ctx.resume()
 				} catch {
@@ -115,104 +140,122 @@ export async function startPagerMonitor(options: PagerMonitorOptions): Promise<P
 		},
 		stop() {
 			if (stopped) return
-			stopped = true
-			for (const track of stream?.getTracks() ?? []) track.stop()
-			void ctx?.close().catch(() => {})
 			setStatus('stopped')
+			stopped = true
+			release()
 		},
 	}
 
-	try {
-		stream = await navigator.mediaDevices.getUserMedia({
-			audio: {
-				deviceId: options.deviceId ? { exact: options.deviceId } : undefined,
-				// The speech processing browsers apply by default treats a steady
-				// tone as noise and removes it. Turn all of it off.
-				echoCancellation: false,
-				noiseSuppression: false,
-				autoGainControl: false,
-				channelCount: 1,
-			},
-		})
-	} catch (err) {
-		const name = err instanceof Error ? err.name : ''
-		setStatus(
-			'unavailable',
-			name === 'OverconstrainedError' || name === 'NotFoundError'
-				? 'The pager audio input was not found'
-				: name === 'NotAllowedError'
-					? 'The browser did not allow access to the pager audio input'
-					: 'The pager audio input could not be opened',
+	const open = async () => {
+		// Follow the saved input if the browser has re-issued its id.
+		let deviceId = options.deviceId
+		const resolved = await matchSavedDevice(
+			() => listDevices('audioinput', 'Input'),
+			deviceId,
+			options.deviceLabel ?? '',
 		)
-		return monitor
-	}
-	if (stopped) {
-		for (const track of stream.getTracks()) track.stop()
-		return monitor
-	}
+		if (stopped) return
+		if (resolved && resolved !== deviceId) {
+			deviceId = resolved
+			options.onDeviceIdChange?.(resolved)
+		}
 
-	for (const track of stream.getAudioTracks()) {
-		track.addEventListener('ended', () => {
-			inputLost = true
-			if (!stopped) setStatus('unavailable', 'The pager audio input was disconnected')
-		})
-	}
-
-	try {
-		ctx = new AudioContext()
-		const moduleUrl = URL.createObjectURL(new Blob([TAP_PROCESSOR], { type: 'application/javascript' }))
 		try {
-			await ctx.audioWorklet.addModule(moduleUrl)
-		} finally {
-			URL.revokeObjectURL(moduleUrl)
+			stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					deviceId: deviceId ? { exact: deviceId } : undefined,
+					// The speech processing browsers apply by default treats a steady
+					// tone as noise and removes it. Turn all of it off.
+					echoCancellation: false,
+					noiseSuppression: false,
+					autoGainControl: false,
+					channelCount: 1,
+				},
+			})
+		} catch (err) {
+			const name = err instanceof Error ? err.name : ''
+			setStatus(
+				'unavailable',
+				name === 'OverconstrainedError' || name === 'NotFoundError'
+					? 'The pager audio input was not found'
+					: name === 'NotAllowedError'
+						? 'The browser did not allow access to the pager audio input'
+						: 'The pager audio input could not be opened',
+			)
+			return
+		}
+		// Stopped while the input was opening: let it go straight away.
+		if (stopped) return release()
+
+		for (const track of stream.getAudioTracks()) {
+			track.addEventListener('ended', () => {
+				inputLost = true
+				setStatus('unavailable', 'The pager audio input was disconnected')
+			})
 		}
 
-		const detector = createPagerToneDetector({
-			sampleRate: ctx.sampleRate,
-			sets: options.sets,
-			onMatch: options.onMatch,
-			onTone: options.onTone,
-		})
-
-		const source = ctx.createMediaStreamSource(stream)
-		const tap = new AudioWorkletNode(ctx, 'pager-tap', { numberOfOutputs: 1 })
-		// Pull the tap through a muted gain so the graph is rendered; nothing is
-		// actually played back.
-		const mute = ctx.createGain()
-		mute.gain.value = 0
-		source.connect(tap).connect(mute).connect(ctx.destination)
-
-		let sumSquares = 0
-		let count = 0
-		let lastLevel = 0
-		tap.port.onmessage = (event: MessageEvent<Float32Array>) => {
-			const samples = event.data
-			detector.process(samples)
-			if (!options.onLevel) return
-			for (let i = 0; i < samples.length; i++) sumSquares += samples[i]! * samples[i]!
-			count += samples.length
-			const now = performance.now()
-			if (now - lastLevel >= LEVEL_INTERVAL_MS) {
-				const rms = Math.sqrt(sumSquares / Math.max(1, count))
-				options.onLevel(rms > 0 ? 20 * Math.log10(rms) : -Infinity)
-				sumSquares = 0
-				count = 0
-				lastLevel = now
+		try {
+			ctx = new AudioContext()
+			const moduleUrl = URL.createObjectURL(new Blob([TAP_PROCESSOR], { type: 'application/javascript' }))
+			try {
+				await ctx.audioWorklet.addModule(moduleUrl)
+			} finally {
+				URL.revokeObjectURL(moduleUrl)
 			}
-		}
+			if (stopped) return release()
 
-		const reportState = () => {
-			if (stopped || inputLost) return
-			setStatus(ctx!.state === 'running' ? 'listening' : 'suspended')
+			const detector = createPagerToneDetector({
+				sampleRate: ctx.sampleRate,
+				sets: options.sets,
+				onMatch: (set) => {
+					if (!stopped) options.onMatch(set)
+				},
+				onTone: options.onTone,
+			})
+
+			const source = ctx.createMediaStreamSource(stream)
+			const tap = new AudioWorkletNode(ctx, 'pager-tap', { numberOfOutputs: 1 })
+			// Pull the tap through a muted gain so the graph is rendered; nothing is
+			// actually played back.
+			const mute = ctx.createGain()
+			mute.gain.value = 0
+			source.connect(tap).connect(mute).connect(ctx.destination)
+
+			let sumSquares = 0
+			let count = 0
+			let lastLevel = 0
+			tap.port.onmessage = (event: MessageEvent<Float32Array>) => {
+				if (stopped) return
+				const samples = event.data
+				detector.process(samples)
+				if (!options.onLevel) return
+				for (let i = 0; i < samples.length; i++) sumSquares += samples[i]! * samples[i]!
+				count += samples.length
+				const now = performance.now()
+				if (now - lastLevel >= LEVEL_INTERVAL_MS) {
+					const rms = Math.sqrt(sumSquares / Math.max(1, count))
+					options.onLevel(rms > 0 ? 20 * Math.log10(rms) : -Infinity)
+					sumSquares = 0
+					count = 0
+					lastLevel = now
+				}
+			}
+
+			const reportState = () => {
+				if (stopped || inputLost || !ctx) return
+				setStatus(ctx.state === 'running' ? 'listening' : 'suspended')
+			}
+			ctx.addEventListener('statechange', reportState)
+			await monitor.resume()
+			reportState()
+		} catch (err) {
+			if (stopped) return
+			console.error('Pager monitor failed to start:', err)
+			release()
+			setStatus('unavailable', 'This browser could not process the pager audio')
 		}
-		ctx.addEventListener('statechange', reportState)
-		await monitor.resume()
-		reportState()
-	} catch (err) {
-		console.error('Pager monitor failed to start:', err)
-		for (const track of stream.getTracks()) track.stop()
-		void ctx?.close().catch(() => {})
-		setStatus('unavailable', 'This browser could not process the pager audio')
 	}
+
+	void open()
 	return monitor
 }

@@ -10,7 +10,8 @@ import {
 import { playClip } from '@/audio/play'
 import { audioBlocked, probeAudio } from '@/audio/autoplay'
 import { createReloadScheduler } from '@/update/reload'
-import { resolveOutputDevice, listDevices, matchSavedDevice } from '@/audio/outputDevice'
+import { resolveOutputDevice } from '@/audio/outputDevice'
+import { notifyPagerPreempt } from '@/audio/pagerPreempt'
 import {
   startPagerMonitor,
   supportsPagerMonitor,
@@ -264,12 +265,9 @@ const reloadScheduler = createReloadScheduler({
 // off and hold further ones while the dispatcher talks. Only the department's
 // own sets count — county-wide dispatch shares the channel with other agencies.
 
-type PagerState = PagerMonitorStatus | 'off' | 'no-sets' | 'starting'
+type PagerState = PagerMonitorStatus | 'off' | 'no-sets'
 
 let pagerMonitor: PagerMonitor | null = null
-// Bumped on every start/stop, so a slow start that has been superseded knows to
-// shut itself down.
-let pagerGeneration = 0
 const pagerState = ref<PagerState>('off')
 const pagerDetail = ref<string>('')
 // The page last heard, shown while its hold lasts.
@@ -278,6 +276,8 @@ let pagerHeardTimer: ReturnType<typeof setTimeout> | null = null
 
 const onPagerMatch = (set: PagerToneSet) => {
   announcer.preempt(DEFAULT_PREEMPT_HOLD_MS)
+  // Manual replays (alert cards) stop too.
+  notifyPagerPreempt()
   pagerHeard.value = describePagerToneSet(set)
   if (pagerHeardTimer) clearTimeout(pagerHeardTimer)
   pagerHeardTimer = setTimeout(() => {
@@ -286,15 +286,13 @@ const onPagerMatch = (set: PagerToneSet) => {
 }
 
 const stopPager = () => {
-  pagerGeneration++
   pagerMonitor?.stop()
   pagerMonitor = null
   pagerState.value = 'off'
 }
 
-const startPager = async () => {
+const startPager = () => {
   stopPager()
-  const generation = pagerGeneration
   // Preempting only matters on a dashboard that speaks.
   if (!settingsStore.pagerMonitorEnabled || !settingsStore.autoPlayNewAlerts || !supportsPagerMonitor()) {
     return
@@ -304,36 +302,30 @@ const startPager = async () => {
     pagerState.value = 'no-sets'
     return
   }
-  pagerState.value = 'starting'
-  // Follow the saved input if the browser has re-issued its id.
-  const resolved = await matchSavedDevice(
-    () => listDevices('audioinput', 'Input'),
-    settingsStore.pagerInputDeviceId,
-    settingsStore.pagerInputDeviceLabel,
-  )
-  if (resolved) settingsStore.pagerInputDeviceId = resolved
-  const monitor = await startPagerMonitor({
+  // The handle comes back at once, so stopPager can always release it — even
+  // while the input is still opening.
+  pagerMonitor = startPagerMonitor({
     deviceId: settingsStore.pagerInputDeviceId,
+    deviceLabel: settingsStore.pagerInputDeviceLabel,
+    onDeviceIdChange: (id) => {
+      settingsStore.pagerInputDeviceId = id
+    },
     sets,
     onMatch: onPagerMatch,
     onStatus: (status, detail) => {
-      if (generation !== pagerGeneration) return
+      // Stopping is reported as 'off' by stopPager itself.
+      if (status === 'stopped') return
       pagerState.value = status
       pagerDetail.value = detail ?? ''
     },
   })
-  if (generation !== pagerGeneration) {
-    monitor.stop()
-    return
-  }
-  pagerMonitor = monitor
-  pagerState.value = monitor.status
+  pagerState.value = pagerMonitor.status
 }
 
 // An unplugged input comes back as a device change; try again then.
 const onDeviceChange = () => {
   void checkOutputDevice()
-  if (pagerState.value === 'unavailable') void startPager()
+  if (pagerState.value === 'unavailable') startPager()
 }
 
 const pagerLabel = computed(() => {
@@ -417,7 +409,7 @@ onMounted(() => {
     initialized.value = true
     if (organization.value) {
       startStream()
-      void startPager()
+      startPager()
     }
   })
 })

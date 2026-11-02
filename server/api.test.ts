@@ -631,6 +631,21 @@ describe('PUT /api/org/:organizationKey settings', () => {
 		expect(res.status).toBe(400)
 	})
 
+	it('keeps stored pager tone sets when a save omits the field', async () => {
+		// A settings page from a build that predates the field saves without it.
+		const store = createInMemoryStore({ orgs: [{ ...orgRow, pager_tone_sets: '330.5 569.1 Station 1' }] })
+		const res = await put(createApp(() => store), 'boone', { Authorization: 'Bearer abcdef' }, { default_city: 'Ames' })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ default_city: 'Ames', pager_tone_sets: '330.5 569.1 Station 1' })
+		expect(await store.findOrgByKey('boone')).toMatchObject({ pager_tone_sets: '330.5 569.1 Station 1' })
+	})
+
+	it('clears pager tone sets on an explicit null', async () => {
+		const res = await put(appWith([{ ...orgRow, pager_tone_sets: '330.5 569.1' }]), 'boone', { Authorization: 'Bearer abcdef' }, { pager_tone_sets: null })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ pager_tone_sets: null })
+	})
+
 	it('rejects too many pager tone sets', async () => {
 		const many = Array.from({ length: 21 }, (_, i) => `${300 + i * 20} 2000`).join('\n')
 		const res = await put(appWith([orgRow]), 'boone', { Authorization: 'Bearer abcdef' }, { pager_tone_sets: many })

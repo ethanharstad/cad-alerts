@@ -27,18 +27,25 @@ export async function playClip(url: string, options: PlayClipOptions = {}): Prom
   }
   if (signal?.aborted) return
   return new Promise<void>(resolve => {
-    signal?.addEventListener('abort', () => {
+    // The signal outlives the clip (it covers the tone and the speech), so the
+    // listener is dropped as soon as the clip is done, whichever way it ends.
+    const onAbort = () => {
       audio.pause()
+      finish()
+    }
+    const finish = () => {
+      signal?.removeEventListener('abort', onAbort)
       resolve()
-    })
-    audio.addEventListener('ended', () => resolve())
-    audio.addEventListener('error', () => resolve())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    audio.addEventListener('ended', finish)
+    audio.addEventListener('error', finish)
     audio.play().then(
       () => notePlayResult(),
       err => {
         notePlayResult(err)
         console.error('Failed to play audio:', err)
-        resolve()
+        finish()
       },
     )
   })

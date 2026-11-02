@@ -3,6 +3,7 @@ import { ref, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAlertAudio } from '@/api/client'
 import { applyOutputDevice } from '@/audio/outputDevice'
+import { onPagerPreempt } from '@/audio/pagerPreempt'
 import type { Alert } from '../../shared/types'
 
 interface Props {
@@ -47,7 +48,11 @@ watchEffect(() => {
   if (audioEl.value) void applyOutputDevice(audioEl.value, settingsStore.audioOutputDeviceId)
 })
 
+// A manual replay is cut off by the pager tones just like an announced alert.
+const stopListening = onPagerPreempt(() => audioEl.value?.pause())
+
 onUnmounted(() => {
+  stopListening()
   if (audioUrl.value) {
     URL.revokeObjectURL(audioUrl.value)
   }

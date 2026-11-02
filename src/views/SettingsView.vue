@@ -455,6 +455,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { getOrganization, updateOrganizationSettings, ApiError } from '@/api/client'
 import type { PublicOrganization } from '../../shared/types'
@@ -498,12 +499,9 @@ import {
 import {
   supportsOutputSelection,
   listOutputDevices,
-  requestOutputAccess,
-  resolveOutputDevice,
   listDevices,
-  matchSavedDevice,
-  type OutputDevice,
 } from '@/audio/outputDevice'
+import { useDevicePicker } from '@/audio/useDevicePicker'
 
 const settingsStore = useSettingsStore()
 const message = ref<string>('')
@@ -562,54 +560,28 @@ const saveSettings = async () => {
 // ---- Audio output (this browser only) ----
 
 const outputSelectionSupported = supportsOutputSelection()
-const outputDevices = ref<OutputDevice[]>([])
-const outputDeviceMessage = ref<string>('')
+const {
+  audioOutputDeviceId,
+  audioOutputDeviceLabel,
+  pagerInputDeviceId,
+  pagerInputDeviceLabel,
+} = storeToRefs(settingsStore)
 
-// A saved device that isn't in the list is still offered, so the select shows
-// what is chosen; but only once we can see devices at all, since before
-// permission the list is empty for every device.
-const savedDeviceMissing = computed(
-  () =>
-    !!settingsStore.audioOutputDeviceId &&
-    outputDevices.value.length > 0 &&
-    !outputDevices.value.some(d => d.deviceId === settingsStore.audioOutputDeviceId),
-)
-
-const refreshOutputDevices = async () => {
-  try {
-    outputDevices.value = await listOutputDevices()
-  } catch {
-    outputDevices.value = []
-  }
-  // Follow the saved device if the browser has re-issued its id.
-  const resolved = await resolveOutputDevice(
-    settingsStore.audioOutputDeviceId,
-    settingsStore.audioOutputDeviceLabel,
-  )
-  if (resolved) settingsStore.audioOutputDeviceId = resolved
-}
-
-const findOutputDevices = async () => {
-  outputDeviceMessage.value = ''
-  try {
-    await requestOutputAccess()
-  } catch {
-    outputDeviceMessage.value =
-      'The browser did not allow access, so devices cannot be listed. Alerts will use the system default.'
-    return
-  }
-  await refreshOutputDevices()
-  if (outputDevices.value.length === 0) {
-    outputDeviceMessage.value = 'No selectable output devices were found.'
-  }
-}
-
-const selectOutputDevice = (deviceId: string) => {
-  settingsStore.audioOutputDeviceId = deviceId
-  settingsStore.audioOutputDeviceLabel =
-    outputDevices.value.find(d => d.deviceId === deviceId)?.label ??
-    (deviceId ? settingsStore.audioOutputDeviceLabel : '')
-}
+const {
+  devices: outputDevices,
+  message: outputDeviceMessage,
+  savedMissing: savedDeviceMissing,
+  refresh: refreshOutputDevices,
+  find: findOutputDevices,
+  select: selectOutputDevice,
+} = useDevicePicker({
+  list: listOutputDevices,
+  deviceId: audioOutputDeviceId,
+  label: audioOutputDeviceLabel,
+  deniedMessage:
+    'The browser did not allow access, so devices cannot be listed. Alerts will use the system default.',
+  emptyMessage: 'No selectable output devices were found.',
+})
 
 const testOutputDevice = () => {
   outputDeviceMessage.value = ''
@@ -625,53 +597,21 @@ const testOutputDevice = () => {
 // ---- Pager audio input (this browser only) ----
 
 const pagerMonitorSupported = supportsPagerMonitor()
-const inputDevices = ref<OutputDevice[]>([])
-const inputDeviceMessage = ref<string>('')
-
-const listInputDevices = () => listDevices('audioinput', 'Input')
-
-const savedInputMissing = computed(
-  () =>
-    !!settingsStore.pagerInputDeviceId &&
-    inputDevices.value.length > 0 &&
-    !inputDevices.value.some(d => d.deviceId === settingsStore.pagerInputDeviceId),
-)
-
-const refreshInputDevices = async () => {
-  try {
-    inputDevices.value = await listInputDevices()
-  } catch {
-    inputDevices.value = []
-  }
-  const resolved = await matchSavedDevice(
-    listInputDevices,
-    settingsStore.pagerInputDeviceId,
-    settingsStore.pagerInputDeviceLabel,
-  )
-  if (resolved) settingsStore.pagerInputDeviceId = resolved
-}
-
-const findInputDevices = async () => {
-  inputDeviceMessage.value = ''
-  try {
-    await requestOutputAccess()
-  } catch {
-    inputDeviceMessage.value =
-      'The browser did not allow microphone access, so the pager audio cannot be heard.'
-    return
-  }
-  await refreshInputDevices()
-  if (inputDevices.value.length === 0) {
-    inputDeviceMessage.value = 'No audio inputs were found.'
-  }
-}
-
-const selectInputDevice = (deviceId: string) => {
-  settingsStore.pagerInputDeviceId = deviceId
-  settingsStore.pagerInputDeviceLabel =
-    inputDevices.value.find(d => d.deviceId === deviceId)?.label ??
-    (deviceId ? settingsStore.pagerInputDeviceLabel : '')
-}
+const {
+  devices: inputDevices,
+  message: inputDeviceMessage,
+  savedMissing: savedInputMissing,
+  refresh: refreshInputDevices,
+  find: findInputDevices,
+  select: selectInputDevice,
+} = useDevicePicker({
+  list: () => listDevices('audioinput', 'Input'),
+  deviceId: pagerInputDeviceId,
+  label: pagerInputDeviceLabel,
+  deniedMessage:
+    'The browser did not allow microphone access, so the pager audio cannot be heard.',
+  emptyMessage: 'No audio inputs were found.',
+})
 
 // ---- Organization Settings (server-side, per-organization) ----
 // These live on the organization row, unlike the device settings above which
@@ -711,7 +651,7 @@ const pagerToneErrors = computed(() => {
 // ---- Test listening: run the pager monitor here, against the typed sets ----
 
 const pagerTest = ref<PagerMonitor | null>(null)
-const pagerTestState = ref<PagerMonitorStatus | 'starting'>('starting')
+const pagerTestState = ref<PagerMonitorStatus>('starting')
 const pagerTestDetail = ref<string>('')
 const pagerLevel = ref<number>(-60)
 const pagerTestLog = ref<string[]>([])
@@ -741,31 +681,35 @@ const stopPagerTest = () => {
   pagerTest.value = null
 }
 
-const togglePagerTest = async () => {
+const togglePagerTest = () => {
   if (pagerTest.value) {
     stopPagerTest()
     return
   }
   pagerTestLog.value = []
-  pagerTestState.value = 'starting'
   pagerLevel.value = -60
-  const monitor = await startPagerMonitor({
+  // The handle comes back at once, so a second click or leaving the page always
+  // stops it — even while the input is still opening.
+  pagerTest.value = startPagerMonitor({
     deviceId: settingsStore.pagerInputDeviceId,
+    deviceLabel: settingsStore.pagerInputDeviceLabel,
+    onDeviceIdChange: id => {
+      settingsStore.pagerInputDeviceId = id
+    },
     sets: parsedPagerTones.value.sets,
     onMatch: set => logPagerTest(`Page matched: ${describePagerToneSet(set)}`),
     onTone: hz => logPagerTest(`Tone heard: ${hz} Hz`),
     onStatus: (status, detail) => {
       pagerTestState.value = status
       pagerTestDetail.value = detail ?? ''
+      // Opening the input is what reveals device labels; refresh the list now.
+      if (status === 'listening' || status === 'suspended') void refreshInputDevices()
     },
     onLevel: dbfs => {
       pagerLevel.value = Math.max(-60, dbfs)
     },
   })
-  pagerTest.value = monitor
-  pagerTestState.value = monitor.status
-  // Opening the input is what reveals device labels; refresh the list now.
-  void refreshInputDevices()
+  pagerTestState.value = pagerTest.value.status
 }
 
 // The test's audio processing may wait for a gesture, like any page audio.
