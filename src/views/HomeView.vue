@@ -2,11 +2,22 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
-import { createAlertAnnouncer, DEFAULT_ACTIONABLE_WINDOW_MS } from '@/audio/announcer'
+import {
+  createAlertAnnouncer,
+  DEFAULT_ACTIONABLE_WINDOW_MS,
+  DEFAULT_PREEMPT_HOLD_MS,
+} from '@/audio/announcer'
 import { playClip } from '@/audio/play'
 import { audioBlocked, probeAudio } from '@/audio/autoplay'
 import { createReloadScheduler } from '@/update/reload'
 import { resolveOutputDevice } from '@/audio/outputDevice'
+import { notifyPagerPreempt } from '@/audio/pagerPreempt'
+import {
+  startPagerMonitor,
+  supportsPagerMonitor,
+  type PagerMonitor,
+  type PagerMonitorStatus,
+} from '@/audio/pagerMonitor'
 import {
   getOrganization,
   getAlerts,
@@ -18,6 +29,11 @@ import {
 } from '@/api/client'
 import type { Alert, PublicOrganization } from '../../shared/types'
 import { selectTone } from '../../shared/alertTones'
+import {
+  parsePagerToneSets,
+  describePagerToneSet,
+  type PagerToneSet,
+} from '../../shared/pagerTones'
 
 const MAX_ALERTS = 5
 
@@ -143,7 +159,7 @@ const onAlertArrived = (alert: Alert) => {
  * that to know when it may start another. A failure resolves too: a clip that
  * won't play must not wedge the next one.
  */
-const playAlert = async (alert: Alert) => {
+const playAlert = async (alert: Alert, signal: AbortSignal) => {
   try {
     // Load the speech before sounding the tone, so the tone is never followed
     // by a gap — or by nothing, if the audio cannot be fetched.
@@ -153,9 +169,12 @@ const playAlert = async (alert: Alert) => {
       settingsStore.organizationSecret,
     )
     try {
+      // The signal aborts when the department's pager tones are heard (see
+      // onPagerMatch) — possibly while the audio was still loading, in which
+      // case nothing plays at all.
       const tone = organization.value ? selectTone(organization.value, new Date()) : undefined
-      if (tone) await playClip(tone.url, playOptions())
-      await playClip(audioUrl, playOptions())
+      if (tone) await playClip(tone.url, { ...playOptions(), signal })
+      await playClip(audioUrl, { ...playOptions(), signal })
     } finally {
       URL.revokeObjectURL(audioUrl)
     }
@@ -237,7 +256,93 @@ const startStream = () => {
 // never out from under an operator's pause — a reload would resume the stream
 // they deliberately stopped. A paused dashboard picks the update up on resume.
 const reloadScheduler = createReloadScheduler({
-  isBusy: () => announcer.isBusy || isPaused.value,
+  isBusy: () => announcer.isBusy || announcer.isHolding || isPaused.value,
+})
+
+// ---- Pager monitor ----
+// With a pager audio feed wired into this computer, hearing one of the
+// department's tone sets means the real dispatch has started: cut the pre-alert
+// off and hold further ones while the dispatcher talks. Only the department's
+// own sets count — county-wide dispatch shares the channel with other agencies.
+
+type PagerState = PagerMonitorStatus | 'off' | 'no-sets'
+
+let pagerMonitor: PagerMonitor | null = null
+const pagerState = ref<PagerState>('off')
+const pagerDetail = ref<string>('')
+// The page last heard, shown while its hold lasts.
+const pagerHeard = ref<string | null>(null)
+let pagerHeardTimer: ReturnType<typeof setTimeout> | null = null
+
+const onPagerMatch = (set: PagerToneSet) => {
+  announcer.preempt(DEFAULT_PREEMPT_HOLD_MS)
+  // Manual replays (alert cards) stop too.
+  notifyPagerPreempt()
+  pagerHeard.value = describePagerToneSet(set)
+  if (pagerHeardTimer) clearTimeout(pagerHeardTimer)
+  pagerHeardTimer = setTimeout(() => {
+    pagerHeard.value = null
+  }, DEFAULT_PREEMPT_HOLD_MS)
+}
+
+const stopPager = () => {
+  pagerMonitor?.stop()
+  pagerMonitor = null
+  pagerState.value = 'off'
+}
+
+const startPager = () => {
+  stopPager()
+  // Preempting only matters on a dashboard that speaks.
+  if (!settingsStore.pagerMonitorEnabled || !settingsStore.autoPlayNewAlerts || !supportsPagerMonitor()) {
+    return
+  }
+  const { sets } = parsePagerToneSets(organization.value?.pager_tone_sets)
+  if (sets.length === 0) {
+    pagerState.value = 'no-sets'
+    return
+  }
+  // The handle comes back at once, so stopPager can always release it — even
+  // while the input is still opening.
+  pagerMonitor = startPagerMonitor({
+    deviceId: settingsStore.pagerInputDeviceId,
+    deviceLabel: settingsStore.pagerInputDeviceLabel,
+    onDeviceIdChange: (id) => {
+      settingsStore.pagerInputDeviceId = id
+    },
+    sets,
+    onMatch: onPagerMatch,
+    onStatus: (status, detail) => {
+      // Stopping is reported as 'off' by stopPager itself.
+      if (status === 'stopped') return
+      pagerState.value = status
+      pagerDetail.value = detail ?? ''
+    },
+  })
+  pagerState.value = pagerMonitor.status
+}
+
+// An unplugged input comes back as a device change; try again then.
+const onDeviceChange = () => {
+  void checkOutputDevice()
+  if (pagerState.value === 'unavailable') startPager()
+}
+
+const pagerLabel = computed(() => {
+  switch (pagerState.value) {
+    case 'listening':
+      return 'Pager: listening'
+    case 'starting':
+      return 'Pager: starting…'
+    case 'suspended':
+      return 'Pager: tap to start'
+    case 'no-sets':
+      return 'Pager: no tones set'
+    case 'unavailable':
+      return 'Pager: no input'
+    default:
+      return ''
+  }
 })
 
 // The block lifts on the first tap or keypress, wherever it lands — the banner
@@ -245,6 +350,8 @@ const reloadScheduler = createReloadScheduler({
 // sound, so the probe runs from the listener itself.
 const unlockAudio = () => {
   if (audioBlocked.value) void probeAudio()
+  // The pager monitor's audio processing waits for a gesture the same way.
+  if (pagerState.value === 'suspended') void pagerMonitor?.resume()
 }
 
 // Only a dashboard that is meant to speak can be "blocked"; with auto-play off
@@ -295,13 +402,14 @@ onMounted(() => {
   if (settingsStore.autoPlayNewAlerts) void probeAudio()
 
   void checkOutputDevice()
-  navigator.mediaDevices?.addEventListener('devicechange', checkOutputDevice)
+  navigator.mediaDevices?.addEventListener('devicechange', onDeviceChange)
   fetchOrganization().then(() => {
     // Everything the initial load will show is now in `alerts`; from here on,
     // stream arrivals are genuinely new and may auto-play.
     initialized.value = true
     if (organization.value) {
       startStream()
+      startPager()
     }
   })
 })
@@ -310,9 +418,11 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', unlockAudio)
   document.removeEventListener('keydown', unlockAudio)
   reloadScheduler.stop()
-  navigator.mediaDevices?.removeEventListener('devicechange', checkOutputDevice)
+  navigator.mediaDevices?.removeEventListener('devicechange', onDeviceChange)
   stopStream()
   announcer.clear()
+  stopPager()
+  if (pagerHeardTimer) clearTimeout(pagerHeardTimer)
 })
 </script>
 
@@ -350,6 +460,14 @@ onUnmounted(() => {
               <span class="stream-dot" aria-hidden="true"></span>
               {{ streamStatusLabel }}
             </div>
+            <div
+              v-if="pagerLabel"
+              class="pager-status"
+              :class="pagerState"
+              :title="pagerDetail || 'Cuts pre-alerts off when the department\'s pager tones are heard'"
+            >
+              {{ pagerLabel }}
+            </div>
             <button
               @click="manualRefresh"
               class="btn-refresh"
@@ -373,6 +491,30 @@ onUnmounted(() => {
             <strong>{{ settingsStore.audioOutputDeviceLabel || 'chosen in Settings' }}</strong>
             isn't available, so alerts are playing on the system default. Reconnect it or
             choose another in <RouterLink to="/settings">Settings</RouterLink>.
+          </p>
+        </div>
+
+        <div v-if="pagerHeard" class="status-message pager-heard" role="status">
+          <p>
+            📟 Pager tones heard — <strong>{{ pagerHeard }}</strong>. Pre-alerts are held
+            while dispatch is on the air.
+          </p>
+        </div>
+
+        <div v-if="pagerState === 'unavailable'" class="status-message warning">
+          <p>
+            {{ pagerDetail || 'The pager audio input is unavailable' }}, so pre-alerts will
+            not be cut off when the pager tones out. Check the input in
+            <RouterLink to="/settings">Settings</RouterLink>.
+          </p>
+        </div>
+        <div v-else-if="pagerState === 'suspended'" class="status-message warning">
+          <p>The pager monitor is waiting for the browser — tap anywhere to start listening.</p>
+        </div>
+        <div v-else-if="pagerState === 'no-sets'" class="status-message warning">
+          <p>
+            Pager monitoring is on for this browser, but the organization has no pager tone
+            sets. Add them in <RouterLink to="/settings">Settings</RouterLink>.
           </p>
         </div>
 
@@ -578,6 +720,35 @@ h1 {
   50% {
     opacity: 0.3;
   }
+}
+
+.pager-status {
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background-soft);
+  color: var(--color-text-muted, #666);
+  font-weight: 500;
+}
+
+.pager-status.unavailable,
+.pager-status.suspended,
+.pager-status.no-sets {
+  color: #856404;
+  background: #fff3cd;
+  border-color: #ffeeba;
+}
+
+.status-message.pager-heard {
+  background: #e7f3ff;
+  color: #004085;
+  border: 1px solid #b3d9ff;
+  margin-bottom: 1rem;
+}
+
+.status-message.pager-heard p {
+  margin: 0;
 }
 
 .paused-indicator {

@@ -103,6 +103,7 @@ export function createD1Store(d1: D1Database): AlertStore {
 					quiet_hours_start: settings.quiet_hours_start,
 					quiet_hours_end: settings.quiet_hours_end,
 					allowed_senders: settings.allowed_senders,
+					pager_tone_sets: settings.pager_tone_sets,
 				})
 				.where(eq(organizations.org_id, orgId));
 		},

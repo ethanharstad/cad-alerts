@@ -20,6 +20,8 @@ export const organizations = sqliteTable('organizations', {
 	quiet_hours_end: integer('quiet_hours_end'),
 	// Newline-separated pre-alert senders (see shared/senders.ts); null allows all.
 	allowed_senders: text('allowed_senders'),
+	// Newline-separated pager tone sets (see shared/pagerTones.ts); null is none.
+	pager_tone_sets: text('pager_tone_sets'),
 	// Admin-only soft caps on alerts per rolling hour / 30 days; null is no cap.
 	// Set by hand in SQL, never through the API.
 	alert_cap_hourly: integer('alert_cap_hourly'),

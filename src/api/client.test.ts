@@ -68,6 +68,7 @@ describe('updateOrganizationSettings', () => {
       quiet_hours_start: null,
       quiet_hours_end: null,
       allowed_senders: null,
+      pager_tone_sets: null,
     }
     const org = { org_id: '1', org_key: 'boone', name: 'Boone FD', ...settings }
     const fetchMock = mockFetch({ ok: true, json: async () => org } as Response)
@@ -98,6 +99,7 @@ describe('updateOrganizationSettings', () => {
       quiet_hours_start: null,
       quiet_hours_end: null,
       allowed_senders: null,
+      pager_tone_sets: null,
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -120,6 +122,7 @@ describe('updateOrganizationSettings', () => {
         quiet_hours_start: null,
         quiet_hours_end: null,
         allowed_senders: null,
+        pager_tone_sets: null,
       }),
     ).rejects.toMatchObject({ name: 'ApiError', status: 400 })
   })

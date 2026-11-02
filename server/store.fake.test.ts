@@ -17,6 +17,7 @@ const org: Organization = {
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 	allowed_senders: null,
+	pager_tone_sets: null,
 	alert_cap_hourly: null,
 	alert_cap_monthly: null,
 }
@@ -74,6 +75,7 @@ describe('createInMemoryStore', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({
 			org_id: 'o1',
@@ -86,6 +88,7 @@ describe('createInMemoryStore', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 	})
 
@@ -101,6 +104,7 @@ describe('createInMemoryStore', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			allowed_senders: null,
+			pager_tone_sets: null,
 		})
 		expect(await store.findOrgByKey('boone')).toMatchObject({ default_city: null })
 	})
