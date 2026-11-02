@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PreAlert } from './parse';
-import { renderAlertTextFromString, formatNature } from './template';
+import { renderAlertSentences, renderAlertTextFromString, formatNature } from './template';
 import { DEFAULT_TTS_TEMPLATE } from '../shared/ttsTemplate';
 
 /** Build a PreAlert; coordinates are irrelevant to spoken text. */
@@ -95,6 +95,32 @@ describe('renderAlertTextFromString', () => {
 				'{nature}. {business}. in {city}.',
 			),
 		).toBe('Hemorrhage. A.b.c. Towing. In Boone.');
+	});
+});
+
+describe('renderAlertSentences', () => {
+	it('returns the sentences the full text is built from, without periods', () => {
+		expect(
+			renderAlertSentences(preAlert('BACK PAIN', '1400 22nd St ##6', 'BOONE'), DEFAULT_TTS_TEMPLATE),
+		).toEqual([
+			'Back Pain',
+			'Fourteen hundred twenty second street',
+			'Fourteen hundred twenty second street',
+			'In Boone',
+		]);
+	});
+
+	it('keeps periods inside a token value within one sentence', () => {
+		expect(
+			renderAlertSentences(
+				preAlert('HEMORRHAGE', '915 8TH ST; A.B.C. TOWING', 'BOONE'),
+				'{nature}. {business}. in {city}.',
+			),
+		).toEqual(['Hemorrhage', 'A.b.c. Towing', 'In Boone']);
+	});
+
+	it('returns no sentences for a template that renders empty', () => {
+		expect(renderAlertSentences(preAlert('SICK PERSON', '1 MAIN ST', 'BOONE'), '{bogus}.')).toEqual([]);
 	});
 });
 

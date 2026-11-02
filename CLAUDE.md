@@ -83,6 +83,10 @@ organization through an authenticated API.
 - `npm run deploy` — build then `wrangler deploy` (manual deploy).
 - `npm run cf-typegen` — regenerate `worker-configuration.d.ts` from bindings
   (commit the result).
+- `npm run tts-spike -- [options]` — one-off spike for issue #22: estimates TTS
+  savings from caching whole alerts vs. stitched per-sentence clips, and
+  renders a listening comparison. Usage in the header of `scripts/tts-spike.ts`;
+  output goes to the gitignored `tts-spike-out/`. Not part of the app or CI.
 
 ## Tests
 

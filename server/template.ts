@@ -151,9 +151,22 @@ function tokenFragments(preAlert: PreAlert): Record<string, string> {
 
 /**
  * Assemble the spoken alert body from a token-based template string (see
- * `shared/ttsTemplate.ts`). Each recognized `{token}` is replaced by its spoken
- * value and everything else is literal free text. An unrecognized token renders
- * as empty and never throws — only tokens the shared registry knows are
+ * `shared/ttsTemplate.ts`): the sentences of {@link renderAlertSentences}, each
+ * ended with a period and joined by a space.
+ */
+export function renderAlertTextFromString(
+	preAlert: PreAlert,
+	template: string = DEFAULT_TTS_TEMPLATE,
+): string {
+	const sentences = renderAlertSentences(preAlert, template);
+	return sentences.length > 0 ? `${sentences.join('. ')}.` : '';
+}
+
+/**
+ * Render a token-based template string into its spoken sentences, without the
+ * trailing periods. Each recognized `{token}` is replaced by its spoken value
+ * and everything else is literal free text. An unrecognized token renders as
+ * empty and never throws — only tokens the shared registry knows are
  * substituted, so a name like `{toString}` can never surface a JS internal.
  *
  * Sentences are delimited only by "." characters in the template's FREE TEXT,
@@ -161,12 +174,15 @@ function tokenFragments(preAlert: PreAlert): Record<string, string> {
  * Hospital" stays one sentence. Each sentence is whitespace-collapsed, trimmed,
  * and capitalized, and empty sentences are dropped. That drop lets an absent
  * optional token (an empty `{business}`) disappear cleanly and reproduces the
- * historical per-sentence capitalization ("In Boone.").
+ * historical per-sentence capitalization ("In Boone").
+ *
+ * Exposed separately from {@link renderAlertTextFromString} so speech can be
+ * synthesized (and cached) per sentence.
  */
-export function renderAlertTextFromString(
+export function renderAlertSentences(
 	preAlert: PreAlert,
 	template: string = DEFAULT_TTS_TEMPLATE,
-): string {
+): string[] {
 	const fragments = tokenFragments(preAlert);
 
 	const sentences: string[] = [];
@@ -193,5 +209,5 @@ export function renderAlertTextFromString(
 	}
 	flush();
 
-	return sentences.length > 0 ? `${sentences.join('. ')}.` : '';
+	return sentences;
 }

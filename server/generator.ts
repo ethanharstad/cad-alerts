@@ -5,6 +5,11 @@ import { PREALERT_PROMPT_INSTRUCTIONS, TTS_INSTRUCTIONS } from './prompts';
 import { renderAlertTextFromString } from './template';
 import { DEFAULT_TTS_TEMPLATE } from '../shared/ttsTemplate';
 
+/** The OpenAI speech model used for every alert. */
+export const TTS_MODEL = 'gpt-4o-mini-tts';
+/** The OpenAI voice used for every alert. */
+export const TTS_VOICE = 'nova';
+
 /**
  * Turns a pre-alert into the spoken alert's parts. Two methods, not one, so the
  * pipeline can keep a durable checkpoint between the cheaper text generation and
@@ -55,8 +60,8 @@ export async function createOpenAIGenerator(env: Env): Promise<AlertGenerator> {
 		},
 		async synthesizeSpeech(text) {
 			const mp3 = await openai.audio.speech.create({
-				model: 'gpt-4o-mini-tts',
-				voice: 'nova',
+				model: TTS_MODEL,
+				voice: TTS_VOICE,
 				instructions: TTS_INSTRUCTIONS,
 				input: text,
 			});

@@ -17,7 +17,8 @@
 		"deploy": "npm run build && wrangler deploy",
 		"db:migrate": "wrangler d1 migrations apply cad-alerts --remote",
 		"db:migrate:local": "wrangler d1 migrations apply cad-alerts --local",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"tts-spike": "vite-node -c scripts/vite.config.ts scripts/tts-spike.ts --"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.44.7",
