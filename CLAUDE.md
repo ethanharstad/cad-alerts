@@ -60,14 +60,15 @@ organization through an authenticated API.
   the dashboard probes for it and shows an "Audio blocked" banner
   (`src/audio/autoplay.ts`) until someone taps the screen.
 - **Design system** (`@scene-ready/design-system`, git dependency pinned to a
-  commit): `src/main.ts` imports its `tokens.css` first, then
-  `src/assets/main.css` (shared `.btn`, `.badge`, `.notice`, `.card`, `.input`
-  classes per its BRANDING.md) and `base.css` (reset, focus ring, theme-aware
-  `color-scheme`). If a value is missing from the tokens, add it upstream in the
-  design system rather than defining it locally. Reference tokens — never hardcode hex/px — and prefer the
-  semantic aliases (`--bg-card`, `--text-primary`, `--success-fg`, …) so dark
-  mode works. Dark mode is `data-theme` on `<html>`, set by `src/theme/theme.ts`
-  from the per-browser `theme` setting (System / Light / Dark). Icons are
+  release tag, e.g. `#v0.3.0`): `src/main.ts` imports its `tokens.css` first,
+  then `src/assets/main.css` (shared `.btn`, `.badge`, `.notice`, `.card`,
+  `.input` classes per its BRANDING.md) and `base.css` (reset, focus ring,
+  theme-aware `color-scheme`). If a value is missing from the tokens, add it
+  upstream in the design system (and tag a release) rather than defining it
+  locally. Reference tokens — never hardcode hex/px — and prefer the semantic
+  aliases (`--bg-card`, `--text-primary`, `--success-fg`, …) so dark mode works.
+  Dark mode is `data-theme` on `<html>`, set by `src/theme/theme.ts` from the
+  per-browser `theme` setting (System / Light / Dark). Icons are
   `lucide-vue-next`; logos come from the package's `assets/`.
 - **Shared** (`shared/types.ts`): API contract types shared by frontend and
   backend. `server/schema.ts` has a compile-time guard asserting Drizzle row
