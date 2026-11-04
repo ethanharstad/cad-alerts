@@ -1,19 +1,22 @@
 <template>
-  <div class="settings">
-    <div class="settings-container">
+  <main class="page page-narrow settings">
       <h1>Settings</h1>
 
-      <div class="info-banner">
-        <p>
-          <strong>Required Configuration:</strong> Both Organization Key and Organization Secret
-          must be configured to use the application.
-        </p>
+      <div class="notice notice-info">
+        <Info aria-hidden="true" />
+        <div class="notice-body">
+          <p>
+            <strong>Required:</strong> enter the Organization Key and Organization Secret to use
+            the dashboard.
+          </p>
+        </div>
       </div>
 
-      <form @submit.prevent="saveSettings" class="settings-form">
+      <form @submit.prevent="saveSettings" class="card settings-form">
         <div class="form-group">
-          <label for="organizationKey">Organization Key</label>
+          <label class="field-label" for="organizationKey">Organization Key</label>
           <input
+            class="input"
             id="organizationKey"
             v-model="settingsStore.organizationKey"
             type="text"
@@ -24,8 +27,9 @@
         </div>
 
         <div class="form-group">
-          <label for="organizationSecret">Organization Secret</label>
+          <label class="field-label" for="organizationSecret">Organization Secret</label>
           <input
+            class="input"
             id="organizationSecret"
             v-model="settingsStore.organizationSecret"
             type="password"
@@ -36,8 +40,9 @@
         </div>
 
         <div class="form-group">
-          <label for="refreshInterval">Fallback Poll Interval (seconds)</label>
+          <label class="field-label" for="refreshInterval">Fallback Poll Interval (seconds)</label>
           <input
+            class="input"
             id="refreshInterval"
             v-model.number="settingsStore.refreshInterval"
             type="number"
@@ -66,11 +71,12 @@
         </div>
 
         <div class="form-group">
-          <label for="audioOutputDevice">Audio Output</label>
+          <label class="field-label" for="audioOutputDevice">Audio Output</label>
           <template v-if="outputSelectionSupported">
             <div class="tone-row">
               <select
                 id="audioOutputDevice"
+                class="input"
                 :value="settingsStore.audioOutputDeviceId"
                 @change="selectOutputDevice(($event.target as HTMLSelectElement).value)"
               >
@@ -82,8 +88,9 @@
                   {{ settingsStore.audioOutputDeviceLabel || 'Saved device' }} (not found)
                 </option>
               </select>
-              <button type="button" class="btn-secondary btn-preview" @click="testOutputDevice">
-                ▶ Test
+              <button type="button" class="btn btn-outline" @click="testOutputDevice">
+                <Play aria-hidden="true" />
+                Test
               </button>
             </div>
             <button
@@ -94,7 +101,7 @@
             >
               Find output devices
             </button>
-            <p v-if="outputDeviceMessage" class="help-text template-error">
+            <p v-if="outputDeviceMessage" class="field-error">
               {{ outputDeviceMessage }}
             </p>
             <p class="help-text">
@@ -134,9 +141,10 @@
         </div>
 
         <div v-if="settingsStore.pagerMonitorEnabled" class="form-group">
-          <label for="pagerInputDevice">Pager Audio Input</label>
+          <label class="field-label" for="pagerInputDevice">Pager Audio Input</label>
           <select
             id="pagerInputDevice"
+            class="input"
             :value="settingsStore.pagerInputDeviceId"
             @change="selectInputDevice(($event.target as HTMLSelectElement).value)"
           >
@@ -156,7 +164,7 @@
           >
             Find input devices
           </button>
-          <p v-if="inputDeviceMessage" class="help-text template-error">
+          <p v-if="inputDeviceMessage" class="field-error">
             {{ inputDeviceMessage }}
           </p>
           <p class="help-text">
@@ -166,17 +174,34 @@
           </p>
         </div>
 
+        <div class="form-group">
+          <label class="field-label" for="theme">Display Theme</label>
+          <select id="theme" v-model="settingsStore.theme" class="input">
+            <option v-for="option in THEME_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <p class="help-text">
+            Dark is easier on the eyes in a dim bay or at night. Applies to this browser only.
+          </p>
+        </div>
 
         <div class="button-group">
-          <button type="submit" class="btn-primary" :disabled="saving">
+          <button type="submit" class="btn btn-primary" :disabled="saving">
             {{ saving ? 'Verifying…' : 'Save Settings' }}
           </button>
-          <button type="button" @click="clearSettings" class="btn-secondary">Clear Settings</button>
+          <button type="button" @click="clearSettings" class="btn btn-outline">Clear Settings</button>
         </div>
       </form>
 
-      <div v-if="message" class="message" :class="messageType">
-        {{ message }}
+      <div
+        v-if="message"
+        class="notice"
+        :class="messageType === 'error' ? 'notice-danger' : 'notice-success'"
+        role="status"
+      >
+        <component :is="messageType === 'error' ? CircleAlert : CircleCheck" aria-hidden="true" />
+        <div class="notice-body"><p>{{ message }}</p></div>
       </div>
 
       <div class="org-settings">
@@ -190,10 +215,11 @@
         </p>
         <p v-else-if="orgLoading" class="help-text">Loading organization settings…</p>
 
-        <form v-if="hasCredentials" @submit.prevent="saveOrgSettings" class="settings-form">
+        <form v-if="hasCredentials" @submit.prevent="saveOrgSettings" class="card settings-form">
           <div class="form-group">
-            <label for="defaultCity">Default City</label>
+            <label class="field-label" for="defaultCity">Default City</label>
             <input
+              class="input"
               id="defaultCity"
               v-model="defaultCity"
               type="text"
@@ -205,8 +231,9 @@
           </div>
 
           <div class="form-group">
-            <label for="defaultState">Default State</label>
+            <label class="field-label" for="defaultState">Default State</label>
             <input
+              class="input"
               id="defaultState"
               v-model="defaultState"
               type="text"
@@ -216,8 +243,9 @@
           </div>
 
           <div class="form-group">
-            <label for="actionableWindow">Actionable Window (minutes)</label>
+            <label class="field-label" for="actionableWindow">Actionable Window (minutes)</label>
             <input
+              class="input"
               id="actionableWindow"
               v-model="actionableWindow"
               type="number"
@@ -237,9 +265,9 @@
           </div>
 
           <div class="form-group">
-            <label for="alertTone">Alert Tone</label>
+            <label class="field-label" for="alertTone">Alert Tone</label>
             <div class="tone-row">
-              <select id="alertTone" v-model="alertTone">
+              <select id="alertTone" v-model="alertTone" class="input">
                 <option value="">None</option>
                 <option v-for="tone in ALERT_TONES" :key="tone.id" :value="tone.id">
                   {{ tone.label }}
@@ -247,32 +275,33 @@
               </select>
               <button
                 type="button"
-                class="btn-secondary btn-preview"
+                class="btn btn-outline"
                 :disabled="!alertTone"
                 @click="previewTone(alertTone)"
               >
-                ▶ Preview
+                <Play aria-hidden="true" />
+                Preview
               </button>
             </div>
             <p class="help-text">Played before each alert is read out.</p>
           </div>
 
           <fieldset class="form-group quiet-hours">
-            <legend>Quiet Hours</legend>
+            <legend class="field-label">Quiet Hours</legend>
             <div class="time-row">
               <div>
-                <label for="quietStart">Start</label>
-                <input id="quietStart" v-model="quietStart" type="time" />
+                <label class="field-label" for="quietStart">Start</label>
+                <input id="quietStart" v-model="quietStart" class="input" type="time" />
               </div>
               <div>
-                <label for="quietEnd">End</label>
-                <input id="quietEnd" v-model="quietEnd" type="time" />
+                <label class="field-label" for="quietEnd">End</label>
+                <input id="quietEnd" v-model="quietEnd" class="input" type="time" />
               </div>
             </div>
 
-            <label for="quietAlertTone">Quiet Hours Tone</label>
+            <label class="field-label" for="quietAlertTone">Quiet Hours Tone</label>
             <div class="tone-row">
-              <select id="quietAlertTone" v-model="quietAlertTone" :disabled="!quietHoursSet">
+              <select id="quietAlertTone" v-model="quietAlertTone" class="input" :disabled="!quietHoursSet">
                 <option value="">None</option>
                 <option v-for="tone in ALERT_TONES" :key="tone.id" :value="tone.id">
                   {{ tone.label }}
@@ -280,11 +309,12 @@
               </select>
               <button
                 type="button"
-                class="btn-secondary btn-preview"
+                class="btn btn-outline"
                 :disabled="!quietAlertTone || !quietHoursSet"
                 @click="previewTone(quietAlertTone)"
               >
-                ▶ Preview
+                <Play aria-hidden="true" />
+                Preview
               </button>
             </div>
             <p class="help-text">
@@ -304,22 +334,28 @@
           </fieldset>
 
           <div class="form-group">
-            <label for="allowedSenders">Allowed Pre-Alert Senders</label>
+            <label class="field-label" for="allowedSenders">Allowed Pre-Alert Senders</label>
             <textarea
               id="allowedSenders"
               v-model="allowedSenders"
               rows="3"
-              class="template-input"
+              class="input template-input"
+              :aria-invalid="invalidSenders.length > 0"
               placeholder="e.g. cad@county.gov&#10;@dispatch.county.gov"
             ></textarea>
-            <p v-if="invalidSenders.length > 0" class="help-text template-error">
+            <p v-if="invalidSenders.length > 0" class="field-error">
               Not an address or @domain: {{ invalidSenders.join(', ') }}
             </p>
-            <p v-else-if="senderCount === 0" class="sender-warning" role="alert">
-              No senders configured — anyone who learns this organization's intake
-              address can trigger an alert on its dashboards. Add your CAD system's
-              sending address or domain.
-            </p>
+            <div v-else-if="senderCount === 0" class="notice notice-warning sender-warning" role="alert">
+              <TriangleAlert aria-hidden="true" />
+              <div class="notice-body">
+                <p>
+                  No senders configured — anyone who learns this organization's intake
+                  address can trigger an alert on its dashboards. Add your CAD system's
+                  sending address or domain.
+                </p>
+              </div>
+            </div>
             <p class="help-text">
               One per line: an exact address (<code>cad@county.gov</code>) or a whole
               domain (<code>@county.gov</code>; subdomains must be listed separately).
@@ -329,15 +365,16 @@
           </div>
 
           <div class="form-group">
-            <label for="pagerToneSets">Pager Tone Sets</label>
+            <label class="field-label" for="pagerToneSets">Pager Tone Sets</label>
             <textarea
               id="pagerToneSets"
               v-model="pagerToneSets"
               rows="3"
-              class="template-input"
+              class="input template-input"
+              :aria-invalid="pagerToneErrors.length > 0"
               placeholder="e.g. 330.5 569.1 Station 1&#10;1092.4 832.5 All call"
             ></textarea>
-            <p v-for="err in pagerToneErrors" :key="err" class="help-text template-error">
+            <p v-for="err in pagerToneErrors" :key="err" class="field-error">
               {{ err }}
             </p>
             <p class="help-text">
@@ -351,11 +388,12 @@
             <div class="pager-test">
               <button
                 type="button"
-                class="btn-secondary btn-preview"
+                class="btn btn-outline"
                 :disabled="!pagerMonitorSupported || (!pagerTest && parsedPagerTones.sets.length === 0)"
                 @click="togglePagerTest"
               >
-                {{ pagerTest ? '■ Stop listening' : '🎧 Test listening' }}
+                <component :is="pagerTest ? Square : Headphones" aria-hidden="true" />
+                {{ pagerTest ? 'Stop listening' : 'Test listening' }}
               </button>
               <template v-if="pagerTest">
                 <span class="pager-test-status">{{ pagerTestStatus }}</span>
@@ -383,7 +421,7 @@
           </div>
 
           <div class="form-group">
-            <label for="ttsTemplate">Text-to-Speech Template</label>
+            <label class="field-label" for="ttsTemplate">Text-to-Speech Template</label>
             <p class="help-text">
               Click a token to insert it, and add your own text around it. Write
               <code v-pre>{address}</code> twice to have the address spoken twice. Periods
@@ -408,7 +446,8 @@
               ref="templateEditor"
               v-model="ttsTemplate"
               rows="3"
-              class="template-input"
+              class="input template-input"
+              :aria-invalid="!templateValidation.valid"
               placeholder="e.g. {nature}. {address}. {address}. in {city}."
             ></textarea>
 
@@ -425,7 +464,7 @@
               </template>
             </div>
 
-            <p v-if="!templateValidation.valid" class="help-text template-error">
+            <p v-if="!templateValidation.valid" class="field-error">
               Unknown token(s): {{ templateValidation.unknownTokens.join(', ') }}
             </p>
 
@@ -437,7 +476,7 @@
           <div class="button-group">
             <button
               type="submit"
-              class="btn-primary"
+              class="btn btn-primary"
               :disabled="orgSaving || !templateValidation.valid || invalidSenders.length > 0 || pagerToneErrors.length > 0"
             >
               {{ orgSaving ? 'Saving…' : 'Save Organization Settings' }}
@@ -445,16 +484,31 @@
           </div>
         </form>
 
-        <div v-if="orgMessage" class="message" :class="orgMessageType">
-          {{ orgMessage }}
+        <div
+          v-if="orgMessage"
+          class="notice"
+          :class="orgMessageType === 'error' ? 'notice-danger' : 'notice-success'"
+          role="status"
+        >
+          <component :is="orgMessageType === 'error' ? CircleAlert : CircleCheck" aria-hidden="true" />
+          <div class="notice-body"><p>{{ orgMessage }}</p></div>
         </div>
       </div>
-    </div>
-  </div>
+  </main>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import {
+  CircleAlert,
+  CircleCheck,
+  Headphones,
+  Info,
+  Play,
+  Square,
+  TriangleAlert,
+} from 'lucide-vue-next'
+import { THEME_OPTIONS } from '@/theme/theme'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
 import { getOrganization, updateOrganizationSettings, ApiError } from '@/api/client'
@@ -920,356 +974,168 @@ const clearSettings = () => {
 </script>
 
 <style scoped>
-.settings {
-  min-height: 100vh;
-  padding: 2rem 1rem;
+.settings > * + * {
+  margin-top: var(--space-6);
 }
 
-.settings-container {
-  max-width: 600px;
-  margin: 0 auto;
+.settings-form > .form-group + .form-group,
+.settings-form > .form-group + .button-group {
+  margin-top: var(--space-6);
 }
 
-h1 {
-  margin-bottom: 1rem;
-  color: var(--color-heading);
+.org-settings > * + * {
+  margin-top: var(--space-4);
 }
 
-.info-banner {
-  background: #e7f3ff;
-  border: 1px solid #b3d9ff;
-  border-radius: 4px;
-  padding: 1rem;
-  margin-bottom: 1.5rem;
+.section-note {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
-.info-banner p {
-  margin: 0;
-  color: #004085;
-  font-size: 0.9rem;
-}
-
-.settings-form {
-  background: var(--color-background-soft);
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-input,
-select {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  font-size: 1rem;
-  background: var(--color-background);
-  color: var(--color-text);
-  box-sizing: border-box;
-}
-
-input:focus,
-select:focus {
-  outline: none;
-  border-color: var(--color-border-hover);
-  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+.org-settings h2 + .section-note {
+  margin-top: var(--space-1);
 }
 
 .tone-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .tone-row select {
   flex: 1;
-}
-
-.btn-preview {
-  white-space: nowrap;
-  padding: 0.5rem 1rem;
-}
-
-.btn-preview:disabled,
-select:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  min-width: 0;
 }
 
 .quiet-hours {
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 1rem;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .quiet-hours legend {
-  padding: 0 0.25rem;
-  font-weight: 600;
-  color: var(--color-text);
+  padding: 0 var(--space-1);
 }
 
 .time-row {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .time-row > div {
   flex: 1;
 }
 
-.help-text {
-  margin-top: 0.25rem;
-  font-size: 0.875rem;
-  color: var(--color-text-muted, #666);
-}
-
-.checkbox-group {
-  margin-bottom: 1.5rem;
-}
-
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
+  gap: var(--space-2);
+  min-height: 44px;
+  color: var(--text-primary);
   font-weight: 600;
-  color: var(--color-text);
-}
-
-.checkbox-label input[type="checkbox"] {
-  width: auto;
-  height: 1.25rem;
   cursor: pointer;
-  margin: 0;
+  user-select: none;
 }
 
-.checkbox-label span {
-  user-select: none;
+.checkbox-label:has(input:disabled) {
+  color: var(--text-tertiary);
+  cursor: default;
 }
 
 .button-group {
   display: flex;
-  gap: 1rem;
-  margin-top: 2rem;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
-button {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 4px;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
+.form-group > .link-button {
+  margin-top: var(--space-3);
 }
 
-.btn-primary {
-  background: hsla(160, 100%, 37%, 1);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: hsla(160, 100%, 32%, 1);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--color-background-mute);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-}
-
-.btn-secondary:hover {
-  background: var(--color-background-soft);
-}
-
-.message {
-  margin-top: 1.5rem;
-  padding: 1rem;
-  border-radius: 4px;
-  font-weight: 500;
-}
-
-.message.success {
-  background: #d4edda;
-  color: #155724;
-  border: 1px solid #c3e6cb;
-}
-
-.message.error {
-  background: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
-}
-
-.org-settings {
-  margin-top: 2.5rem;
-}
-
-.org-settings h2 {
-  margin-bottom: 0.25rem;
-  color: var(--color-heading);
-}
-
-.section-note {
-  margin: 0 0 1.5rem;
-  font-size: 0.9rem;
-  color: var(--color-text-muted, #666);
-}
-
-textarea.template-input {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  font-family: inherit;
-  font-size: 1rem;
-  background: var(--color-background);
-  color: var(--color-text);
-  box-sizing: border-box;
-  resize: vertical;
-}
-
-textarea.template-input:focus {
-  outline: none;
-  border-color: var(--color-border-hover);
-  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+.sender-warning {
+  margin-top: var(--space-2);
 }
 
 .token-palette {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
 }
 
 .token-chip {
-  padding: 0.35rem 0.6rem;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-background-mute);
-  color: var(--color-text);
-  font-family: monospace;
-  font-size: 0.85rem;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-full);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 
 .token-chip:hover {
-  border-color: var(--color-border-hover);
+  border-color: var(--focus-ring);
 }
 
 .template-preview {
-  margin-top: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px dashed var(--color-border);
-  border-radius: 4px;
-  background: var(--color-background);
-  font-family: monospace;
-  font-size: 0.9rem;
+  min-height: 2.5rem;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  min-height: 1.5rem;
-}
-
-.seg-text {
-  color: var(--color-text);
 }
 
 .seg-token {
-  border-radius: 3px;
-  padding: 0 0.15rem;
-  font-weight: 600;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
 }
 
 .seg-known {
-  background: #d4edda;
-  color: #155724;
+  background: var(--status-success-bg);
+  color: var(--success-fg);
 }
 
 .seg-unknown {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.template-error {
-  color: #721c24;
-}
-
-.sender-warning {
-  margin-top: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  background: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffeeba;
-  border-radius: 4px;
+  background: var(--status-danger-bg);
+  color: var(--danger-fg);
+  text-decoration: underline wavy;
 }
 
 .pager-test {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
   flex-wrap: wrap;
-  margin-top: 0.75rem;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .pager-test-status {
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
 }
 
 .pager-level {
   flex: 1;
   min-width: 8rem;
-  height: 1rem;
+  height: var(--space-4);
 }
 
 .pager-test-log {
-  margin: 0.5rem 0 0;
-  padding-left: 1.25rem;
-  font-family: monospace;
-  font-size: 0.875rem;
-}
-
-.link-button {
-  margin-top: 0.75rem;
-  padding: 0;
-  background: none;
-  border: none;
-  color: hsla(160, 100%, 37%, 1);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-@media (min-width: 1024px) {
-  .settings {
-    display: flex;
-    align-items: center;
-  }
+  margin-top: var(--space-2);
+  padding-left: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 640px) {
-  .button-group {
-    flex-direction: column;
-  }
-
-  button {
+  .button-group .btn {
     width: 100%;
   }
 }

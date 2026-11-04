@@ -59,6 +59,16 @@ organization through an authenticated API.
   sessionStorage loop guard). Since a reload loses browser autoplay permission,
   the dashboard probes for it and shows an "Audio blocked" banner
   (`src/audio/autoplay.ts`) until someone taps the screen.
+- **Design system** (`@scene-ready/design-system`, git dependency pinned to a
+  commit): `src/main.ts` imports its `tokens.css` first, then
+  `src/assets/main.css` (shared `.btn`, `.badge`, `.notice`, `.card`, `.input`
+  classes per its BRANDING.md) and `base.css` (reset, focus ring, and app-level
+  aliases for gaps the tokens don't cover yet, e.g. dark-mode status tints and
+  button hovers). Reference tokens — never hardcode hex/px — and prefer the
+  semantic aliases (`--bg-card`, `--text-primary`, `--success-fg`, …) so dark
+  mode works. Dark mode is `data-theme` on `<html>`, set by `src/theme/theme.ts`
+  from the per-browser `theme` setting (System / Light / Dark). Icons are
+  `lucide-vue-next`; logos come from the package's `assets/`.
 - **Shared** (`shared/types.ts`): API contract types shared by frontend and
   backend. `server/schema.ts` has a compile-time guard asserting Drizzle row
   types stay assignable to these — keep them in lockstep.

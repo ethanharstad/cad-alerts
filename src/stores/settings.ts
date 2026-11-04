@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { persisted } from './persisted'
+import type { ThemePreference } from '@/theme/theme'
 
 const DEFAULT_REFRESH_INTERVAL = 30 // seconds
 
@@ -21,6 +22,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const pagerMonitorEnabled = persisted('pagerMonitorEnabled', false)
   const pagerInputDeviceId = persisted('pagerInputDeviceId', '')
   const pagerInputDeviceLabel = persisted('pagerInputDeviceLabel', '')
+  // Light/dark display, per browser; 'system' follows the computer's setting.
+  const theme = persisted<ThemePreference>('theme', 'system')
 
   // Reset to defaults; the persistence watch writes the defaults back, so a
   // reload reads them again.
@@ -34,6 +37,7 @@ export const useSettingsStore = defineStore('settings', () => {
     pagerMonitorEnabled.value = false
     pagerInputDeviceId.value = ''
     pagerInputDeviceLabel.value = ''
+    theme.value = 'system'
   }
 
   return {
@@ -46,6 +50,7 @@ export const useSettingsStore = defineStore('settings', () => {
     pagerMonitorEnabled,
     pagerInputDeviceId,
     pagerInputDeviceLabel,
+    theme,
     clearSettings,
   }
 })

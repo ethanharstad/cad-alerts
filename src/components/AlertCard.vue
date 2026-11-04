@@ -60,65 +60,74 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="alert-card">
-    <div class="alert-header">
-      <span class="alert-timestamp">{{ formatTimestamp(alert.timestamp) }}</span>
-    </div>
+  <article class="card alert-card">
+    <header class="alert-header">
+      <h3 class="alert-nature">{{ alert.nature }}</h3>
+      <time class="alert-timestamp" :datetime="new Date(alert.timestamp).toISOString()">
+        {{ formatTimestamp(alert.timestamp) }}
+      </time>
+    </header>
     <div class="alert-body">
-      <p>{{ alert.nature }}</p>
-      <p>{{ alert.address }}</p>
-      <p>{{  alert.city }}</p>
+      <p class="alert-address">{{ alert.address }}</p>
+      <p class="alert-city">{{ alert.city }}</p>
     </div>
     <div v-if="audioUrl" class="alert-audio">
       <audio ref="audioEl" controls :src="audioUrl">
-        Your browser does not support the audio element.
+        This browser can't play the alert audio.
       </audio>
     </div>
-  </div>
+  </article>
 </template>
 
 <style scoped>
 .alert-card {
-  background: var(--color-background-soft);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.3s ease;
+  padding: 0;
+  overflow: hidden;
 }
 
-.alert-card:hover {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-}
-
+/* Card header: the call nature, readable from across the bay. */
 .alert-header {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
 }
 
-.alert-timestamp {
-  font-size: 0.875rem;
-  color: var(--color-text-muted, #666);
-  font-weight: 600;
-}
-
-.alert-body {
-  font-size: 1rem;
-  line-height: 1.6;
-  color: var(--color-text);
-  margin-bottom: 1rem;
+.alert-nature {
+  font-size: var(--text-xl);
   white-space: pre-wrap;
 }
 
+.alert-timestamp {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.alert-body {
+  padding: var(--space-4) var(--space-6);
+  white-space: pre-wrap;
+}
+
+.alert-address {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.alert-city {
+  color: var(--text-secondary);
+}
+
 .alert-audio {
-  margin-top: 1rem;
+  padding: 0 var(--space-6) var(--space-4);
 }
 
 .alert-audio audio {
+  display: block;
   width: 100%;
   max-width: 400px;
 }
