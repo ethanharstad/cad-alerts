@@ -1,5 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import {
+  BellOff,
+  CircleAlert,
+  Info,
+  Pause,
+  Play,
+  Radio,
+  RefreshCw,
+  TriangleAlert,
+  VolumeX,
+} from '@lucide/vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 import {
@@ -383,6 +394,24 @@ const togglePause = () => {
   }
 }
 
+// Badge colors (BRANDING.md › Badges): semantic status only, never brand colors.
+const streamBadgeClass = computed(() => {
+  if (streamStatus.value === 'connected') return 'badge-success'
+  if (streamStatus.value === 'reconnecting') return 'badge-warning'
+  return 'badge-danger'
+})
+
+const pagerBadgeClass = computed(() => {
+  switch (pagerState.value) {
+    case 'listening':
+      return 'badge-success'
+    case 'starting':
+      return ''
+    default:
+      return 'badge-warning'
+  }
+})
+
 const streamStatusLabel = computed(() => {
   if (streamStatus.value === 'connected') return 'Live'
   if (streamStatus.value === 'reconnecting') return 'Reconnecting…'
@@ -427,65 +456,79 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="home">
-    <div class="home-container">
-      <button
-        v-if="showAudioBlocked"
-        type="button"
-        class="audio-blocked"
-        role="alert"
-        @click="unlockAudio"
-      >
-        <span class="audio-blocked-title">🔇 Audio blocked — alerts will not be heard</span>
-        <span class="audio-blocked-detail">Tap anywhere to enable sound</span>
-      </button>
+  <main class="page">
+    <button
+      v-if="showAudioBlocked"
+      type="button"
+      class="audio-blocked"
+      role="alert"
+      @click="unlockAudio"
+    >
+      <span class="audio-blocked-title">
+        <VolumeX aria-hidden="true" />
+        Audio blocked — alerts will not be heard
+      </span>
+      <span class="audio-blocked-detail">Tap anywhere to enable sound</span>
+    </button>
 
-      <div v-if="loading" class="status-message loading">
-        <p>Loading organization...</p>
-      </div>
+    <div v-if="loading" class="notice" role="status">
+      <Info aria-hidden="true" />
+      <div class="notice-body"><p>Loading organization…</p></div>
+    </div>
 
-      <div v-else-if="error" class="status-message error">
+    <div v-else-if="error" class="notice notice-danger" role="alert">
+      <CircleAlert aria-hidden="true" />
+      <div class="notice-body">
         <p><strong>Error:</strong> {{ error }}</p>
-        <button @click="fetchOrganization" class="btn-retry">Retry</button>
+        <button type="button" class="btn btn-primary btn-sm" @click="fetchOrganization">Retry</button>
+      </div>
+    </div>
+
+    <section v-if="organization" class="alerts-section" aria-labelledby="alerts-heading">
+      <div class="alerts-header">
+        <h1 id="alerts-heading">{{ organization.name }} — Alerts</h1>
+        <div class="refresh-controls">
+          <span v-if="isPaused" class="badge badge-warning">
+            <span class="badge-dot" aria-hidden="true"></span>
+            Live updates paused
+          </span>
+          <span v-else class="badge stream-status" :class="[streamBadgeClass, streamStatus]">
+            <span class="badge-dot" aria-hidden="true"></span>
+            {{ streamStatusLabel }}
+          </span>
+          <span
+            v-if="pagerLabel"
+            class="badge"
+            :class="pagerBadgeClass"
+            :title="pagerDetail || 'Cuts pre-alerts off when the department\'s pager tones are heard'"
+          >
+            <span class="badge-dot" aria-hidden="true"></span>
+            {{ pagerLabel }}
+          </span>
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            title="Refresh now"
+            @click="manualRefresh"
+          >
+            <RefreshCw aria-hidden="true" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            :title="isPaused ? 'Resume live updates' : 'Pause live updates'"
+            @click="togglePause"
+          >
+            <component :is="isPaused ? Play : Pause" aria-hidden="true" />
+            {{ isPaused ? 'Resume' : 'Pause' }}
+          </button>
+        </div>
       </div>
 
-      <div v-if="organization" class="alerts-section">
-        <div class="alerts-header">
-          <h2>{{ organization.name }} - Alerts</h2>
-          <div class="refresh-controls">
-            <div v-if="isPaused" class="paused-indicator">
-              Live updates paused
-            </div>
-            <div v-else class="stream-status" :class="streamStatus">
-              <span class="stream-dot" aria-hidden="true"></span>
-              {{ streamStatusLabel }}
-            </div>
-            <div
-              v-if="pagerLabel"
-              class="pager-status"
-              :class="pagerState"
-              :title="pagerDetail || 'Cuts pre-alerts off when the department\'s pager tones are heard'"
-            >
-              {{ pagerLabel }}
-            </div>
-            <button
-              @click="manualRefresh"
-              class="btn-refresh"
-              title="Refresh now"
-            >
-              ↻ Refresh
-            </button>
-            <button
-              @click="togglePause"
-              class="btn-pause"
-              :title="isPaused ? 'Resume live updates' : 'Pause live updates'"
-            >
-              {{ isPaused ? '▶ Resume' : '⏸ Pause' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="outputDeviceMissing" class="status-message warning">
+      <div v-if="outputDeviceMissing" class="notice notice-warning">
+        <TriangleAlert aria-hidden="true" />
+        <div class="notice-body">
           <p>
             The alert audio output
             <strong>{{ settingsStore.audioOutputDeviceLabel || 'chosen in Settings' }}</strong>
@@ -493,353 +536,200 @@ onUnmounted(() => {
             choose another in <RouterLink to="/settings">Settings</RouterLink>.
           </p>
         </div>
+      </div>
 
-        <div v-if="pagerHeard" class="status-message pager-heard" role="status">
+      <div v-if="pagerHeard" class="notice notice-info" role="status">
+        <Radio aria-hidden="true" />
+        <div class="notice-body">
           <p>
-            📟 Pager tones heard — <strong>{{ pagerHeard }}</strong>. Pre-alerts are held
+            Pager tones heard — <strong>{{ pagerHeard }}</strong>. Pre-alerts are held
             while dispatch is on the air.
           </p>
         </div>
+      </div>
 
-        <div v-if="pagerState === 'unavailable'" class="status-message warning">
+      <div v-if="pagerState === 'unavailable'" class="notice notice-warning">
+        <TriangleAlert aria-hidden="true" />
+        <div class="notice-body">
           <p>
             {{ pagerDetail || 'The pager audio input is unavailable' }}, so pre-alerts will
             not be cut off when the pager tones out. Check the input in
             <RouterLink to="/settings">Settings</RouterLink>.
           </p>
         </div>
-        <div v-else-if="pagerState === 'suspended'" class="status-message warning">
+      </div>
+      <div v-else-if="pagerState === 'suspended'" class="notice notice-warning">
+        <TriangleAlert aria-hidden="true" />
+        <div class="notice-body">
           <p>The pager monitor is waiting for the browser — tap anywhere to start listening.</p>
         </div>
-        <div v-else-if="pagerState === 'no-sets'" class="status-message warning">
+      </div>
+      <div v-else-if="pagerState === 'no-sets'" class="notice notice-warning">
+        <TriangleAlert aria-hidden="true" />
+        <div class="notice-body">
           <p>
             Pager monitoring is on for this browser, but the organization has no pager tone
             sets. Add them in <RouterLink to="/settings">Settings</RouterLink>.
           </p>
         </div>
+      </div>
 
-        <div v-if="alertsError" class="status-message error">
+      <div v-if="alertsError" class="notice notice-danger" role="alert">
+        <CircleAlert aria-hidden="true" />
+        <div class="notice-body">
           <p><strong>Error:</strong> {{ alertsError }}</p>
-          <button @click="fetchAlerts" class="btn-retry">Retry</button>
-        </div>
-
-        <div v-else-if="alerts.length === 0" class="status-message info">
-          <p>No alerts found for this organization.</p>
-        </div>
-
-        <div v-else class="alerts-list">
-          <AlertCard v-for="alert in alerts" :key="alert.alert_id" :alert="alert" />
+          <button type="button" class="btn btn-primary btn-sm" @click="fetchAlerts">Retry</button>
         </div>
       </div>
-    </div>
+
+      <div v-else-if="alerts.length === 0" class="card empty-state">
+        <BellOff class="empty-icon" aria-hidden="true" />
+        <h2 class="empty-heading">No alerts yet</h2>
+        <p class="empty-detail">
+          Pre-alerts for {{ organization.name }} appear here as soon as CAD sends them.
+        </p>
+      </div>
+
+      <div v-else class="alerts-list">
+        <AlertCard v-for="alert in alerts" :key="alert.alert_id" :alert="alert" />
+      </div>
+    </section>
   </main>
 </template>
 
 <style scoped>
-.home {
-  min-height: 100vh;
-  padding: 2rem 1rem;
+.page > * + * {
+  margin-top: var(--space-4);
 }
 
-.home-container {
-  /* max-width: 800px; */
-  margin: 0 auto;
-}
-
+/*
+ * The one deliberately loud element: a dashboard that can't make sound must be
+ * noticed from across the room. Danger (status) red, not brand red. The pulse is
+ * an opacity-only overlay, and stops under prefers-reduced-motion.
+ */
 .audio-blocked {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   width: 100%;
-  margin-bottom: 1.5rem;
-  padding: 2rem 1rem;
-  border: 3px solid #a71d2a;
-  border-radius: 8px;
-  background: #dc3545;
-  color: white;
+  padding: var(--space-8) var(--space-4);
+  overflow: hidden;
+  background: var(--danger);
+  color: var(--white);
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
   cursor: pointer;
-  font: inherit;
-  animation: audio-blocked-pulse 2s ease-in-out infinite;
+}
+
+.audio-blocked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--gray-900);
+  opacity: 0;
+  animation: audio-blocked-pulse 2s var(--ease-in-out) infinite;
+  pointer-events: none;
 }
 
 .audio-blocked-title {
-  font-size: 2rem;
-  font-weight: 700;
-}
-
-.audio-blocked-detail {
-  font-size: 1.25rem;
-}
-
-/* Movement catches the eye from across a room in a way a static box does not. */
-@keyframes audio-blocked-pulse {
-  0%,
-  100% {
-    background: #dc3545;
-  }
-  50% {
-    background: #a71d2a;
-  }
-}
-
-h1 {
-  margin-bottom: 2rem;
-  color: var(--color-heading);
-}
-
-.status-message {
-  padding: 1.5rem;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  line-height: 1.25;
   text-align: center;
 }
 
-.status-message.loading {
-  background: var(--color-background-soft);
-  color: var(--color-text);
+.audio-blocked-title svg {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
 }
 
-.status-message.error {
-  background: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
+.audio-blocked-detail {
+  font-size: var(--text-xl);
 }
 
-.status-message.warning {
-  background: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffeeba;
-  margin-bottom: 1rem;
+@keyframes audio-blocked-pulse {
+  50% {
+    opacity: 0.2;
+  }
 }
 
-.status-message p {
-  margin: 0 0 1rem 0;
-}
-
-.btn-retry {
-  background: hsla(160, 100%, 37%, 1);
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-.btn-retry:hover {
-  background: hsla(160, 100%, 32%, 1);
-}
-
-.detail-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.detail-item .label {
-  font-size: 0.875rem;
-  color: var(--color-text-muted, #666);
-  font-weight: 600;
-}
-
-.detail-item .value {
-  font-size: 1rem;
-  color: var(--color-text);
-  font-family: monospace;
-  background: var(--color-background);
-  padding: 0.5rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-}
-
-.alerts-section {
-  margin-top: 2rem;
+.alerts-section > * + * {
+  margin-top: var(--space-4);
 }
 
 .alerts-header {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-.alerts-header h2 {
-  margin: 0;
-  color: var(--color-heading);
-  font-size: 1.5rem;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
 .refresh-controls {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
   flex-wrap: wrap;
-}
-
-.stream-status {
-  display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  color: var(--color-text-muted, #666);
-  background: var(--color-background-soft);
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  font-weight: 500;
+  gap: var(--space-3);
 }
 
-.stream-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #adb5bd;
-}
-
-.stream-status.connected .stream-dot {
-  background: hsla(160, 100%, 37%, 1);
-}
-
-.stream-status.reconnecting .stream-dot {
-  background: #e0a800;
-  animation: stream-pulse 1s ease-in-out infinite;
-}
-
-/* Degraded but functioning: steady, not pulsing — this is a resting state, not
-   a transient one. */
-.stream-status.unavailable .stream-dot {
-  background: #d9534f;
+/* Reconnecting is transient, so its dot pulses; "unavailable" is a resting
+   (degraded but working) state and stays steady. */
+.stream-status.reconnecting .badge-dot {
+  animation: stream-pulse 1s var(--ease-in-out) infinite;
 }
 
 @keyframes stream-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
   50% {
     opacity: 0.3;
   }
 }
 
-.pager-status {
-  font-size: 0.875rem;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  background: var(--color-background-soft);
-  color: var(--color-text-muted, #666);
-  font-weight: 500;
-}
-
-.pager-status.unavailable,
-.pager-status.suspended,
-.pager-status.no-sets {
-  color: #856404;
-  background: #fff3cd;
-  border-color: #ffeeba;
-}
-
-.status-message.pager-heard {
-  background: #e7f3ff;
-  color: #004085;
-  border: 1px solid #b3d9ff;
-  margin-bottom: 1rem;
-}
-
-.status-message.pager-heard p {
-  margin: 0;
-}
-
-.paused-indicator {
-  font-size: 0.875rem;
-  color: #856404;
-  background: #fff3cd;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid #ffeaa7;
-  font-weight: 500;
-}
-
-.btn-refresh,
-.btn-pause {
-  font-size: 0.875rem;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  background: var(--color-background);
-  color: var(--color-text);
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.btn-refresh:hover:not(:disabled),
-.btn-pause:hover {
-  background: var(--color-background-soft);
-  border-color: hsla(160, 100%, 37%, 1);
-}
-
-.btn-refresh:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-refresh {
-  background: hsla(160, 100%, 37%, 1);
-  color: white;
-  border-color: hsla(160, 100%, 37%, 1);
-}
-
-.btn-refresh:hover:not(:disabled) {
-  background: hsla(160, 100%, 32%, 1);
-}
-
 .alerts-list {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
-.status-message.info {
-  background: #e7f3ff;
-  color: #004085;
-  border: 1px solid #b3d9ff;
+/* Empty state per BRANDING.md › Empty States. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--text-tertiary);
+}
+
+.empty-heading {
+  font-size: var(--text-lg);
+}
+
+.empty-detail {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 640px) {
-  .alerts-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
-  }
-
   .refresh-controls {
     width: 100%;
-    flex-direction: column;
   }
 
-  .stream-status,
-  .paused-indicator {
-    width: 100%;
-    text-align: center;
-    justify-content: center;
-  }
-
-  .btn-refresh,
-  .btn-pause {
-    width: 100%;
-    justify-content: center;
-  }
-}
-
-@media (min-width: 1024px) {
-  .home {
-    padding: 2rem;
-  }
-
-  .home-container {
-    /* max-width: 1000px; */
+  .refresh-controls .btn {
+    flex: 1;
   }
 }
 </style>
