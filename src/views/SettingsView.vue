@@ -1099,12 +1099,12 @@ const clearSettings = () => {
 }
 
 .seg-known {
-  background: var(--status-success-bg);
+  background: var(--success-surface);
   color: var(--success-fg);
 }
 
 .seg-unknown {
-  background: var(--status-danger-bg);
+  background: var(--danger-surface);
   color: var(--danger-fg);
   text-decoration: underline wavy;
 }

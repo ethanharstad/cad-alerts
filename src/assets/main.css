@@ -93,12 +93,12 @@
 }
 
 .btn-secondary {
-	background: var(--btn-secondary-bg);
+	background: var(--bg-secondary);
 	color: var(--text-inverse);
 }
 
 .btn-secondary:hover:not(:disabled) {
-	background: var(--btn-secondary-hover);
+	background: var(--bg-secondary-hover);
 }
 
 .btn-outline {
@@ -118,7 +118,7 @@
 }
 
 .btn-ghost:hover:not(:disabled) {
-	background: var(--ghost-hover);
+	background: var(--bg-hover);
 }
 
 .btn-danger {
@@ -131,8 +131,8 @@
 }
 
 .btn:disabled {
-	background: var(--btn-disabled-bg);
-	color: var(--btn-disabled-fg);
+	background: var(--bg-disabled);
+	color: var(--text-disabled);
 	border-color: transparent;
 	cursor: default;
 }
@@ -163,8 +163,8 @@
 	gap: 6px;
 	padding: 3px 10px;
 	border-radius: var(--radius-full);
-	background: var(--status-neutral-bg);
-	color: var(--status-neutral-fg);
+	background: var(--neutral-surface);
+	color: var(--neutral-fg);
 	font-family: var(--font-condensed);
 	font-size: var(--text-xs);
 	font-weight: 600;
@@ -183,22 +183,22 @@
 }
 
 .badge-success {
-	background: var(--status-success-bg);
+	background: var(--success-surface);
 	color: var(--success-fg);
 }
 
 .badge-warning {
-	background: var(--status-warning-bg);
+	background: var(--warning-surface);
 	color: var(--warning-fg);
 }
 
 .badge-danger {
-	background: var(--status-danger-bg);
+	background: var(--danger-surface);
 	color: var(--danger-fg);
 }
 
 .badge-info {
-	background: var(--status-info-bg);
+	background: var(--info-surface);
 	color: var(--info-fg);
 }
 
@@ -212,9 +212,9 @@
 	gap: var(--space-3);
 	padding: var(--space-3) var(--space-4);
 	border: 1px solid var(--border);
-	border-left: 4px solid var(--status-neutral-fg);
+	border-left: 4px solid var(--neutral-fg);
 	border-radius: var(--radius-lg);
-	background: var(--status-neutral-bg);
+	background: var(--neutral-surface);
 	color: var(--text-primary);
 	font-size: var(--text-sm);
 }
@@ -224,7 +224,7 @@
 	height: 20px;
 	flex-shrink: 0;
 	margin-top: 1px;
-	color: var(--status-neutral-fg);
+	color: var(--neutral-fg);
 }
 
 .notice-body {
@@ -237,7 +237,7 @@
 }
 
 .notice-success {
-	background: var(--status-success-bg);
+	background: var(--success-surface);
 	border-left-color: var(--success-fg);
 }
 
@@ -246,7 +246,7 @@
 }
 
 .notice-warning {
-	background: var(--status-warning-bg);
+	background: var(--warning-surface);
 	border-left-color: var(--warning-fg);
 }
 
@@ -255,7 +255,7 @@
 }
 
 .notice-danger {
-	background: var(--status-danger-bg);
+	background: var(--danger-surface);
 	border-left-color: var(--danger-fg);
 }
 
@@ -264,7 +264,7 @@
 }
 
 .notice-info {
-	background: var(--status-info-bg);
+	background: var(--info-surface);
 	border-left-color: var(--info-fg);
 }
 

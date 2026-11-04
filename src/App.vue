@@ -123,7 +123,7 @@ nav {
 
 .nav-link:hover {
   color: var(--text-brand);
-  background: var(--ghost-hover);
+  background: var(--bg-hover);
 }
 
 .nav-link.router-link-exact-active {

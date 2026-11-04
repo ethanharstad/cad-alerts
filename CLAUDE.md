@@ -62,9 +62,9 @@ organization through an authenticated API.
 - **Design system** (`@scene-ready/design-system`, git dependency pinned to a
   commit): `src/main.ts` imports its `tokens.css` first, then
   `src/assets/main.css` (shared `.btn`, `.badge`, `.notice`, `.card`, `.input`
-  classes per its BRANDING.md) and `base.css` (reset, focus ring, and app-level
-  aliases for gaps the tokens don't cover yet, e.g. dark-mode status tints and
-  button hovers). Reference tokens — never hardcode hex/px — and prefer the
+  classes per its BRANDING.md) and `base.css` (reset, focus ring, theme-aware
+  `color-scheme`). If a value is missing from the tokens, add it upstream in the
+  design system rather than defining it locally. Reference tokens — never hardcode hex/px — and prefer the
   semantic aliases (`--bg-card`, `--text-primary`, `--success-fg`, …) so dark
   mode works. Dark mode is `data-theme` on `<html>`, set by `src/theme/theme.ts`
   from the per-browser `theme` setting (System / Light / Dark). Icons are

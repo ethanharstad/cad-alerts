@@ -5,53 +5,16 @@
  * first in main.ts; everything here references them by name — never hardcode a
  * hex code or pixel value that a token covers. Prefer the semantic aliases
  * (--bg-card, --text-primary, --border, --accent, --success-fg, …) so dark mode
- * (data-theme="dark" on <html>, see src/theme.ts) flips everything for free.
+ * (data-theme="dark" on <html>, see src/theme/theme.ts) flips everything for free.
  */
 
-/*
- * App-level aliases for things the design system specifies but does not (yet)
- * ship as mode-aware tokens. Each is built from design-system tokens so it stays
- * on-palette; they are candidates for upstreaming into tokens.css.
- */
+/* Native controls (scrollbars, <audio>, date pickers) follow the theme. */
 :root {
 	color-scheme: light;
-
-	/* Button hovers (BRANDING.md › Buttons): Red Dark #9A0C24, #B91C1C. */
-	--accent-hover: color-mix(in srgb, var(--accent) 77%, black);
-	--danger-hover: color-mix(in srgb, var(--danger) 85%, black);
-	--btn-secondary-bg: var(--navy-700);
-	--btn-secondary-hover: var(--navy-900);
-	--btn-disabled-bg: var(--gray-200);
-	--btn-disabled-fg: var(--gray-400);
-	--ghost-hover: var(--gray-100);
-	--bg-input-disabled: var(--gray-100);
-
-	/* Tinted status surfaces. The primitives (--success-bg, …) are light tints
-	   only, which would glare in dark mode. */
-	--status-success-bg: var(--success-bg);
-	--status-warning-bg: var(--warning-bg);
-	--status-danger-bg: var(--danger-bg);
-	--status-info-bg: var(--info-bg);
-	--status-neutral-bg: var(--gray-100);
-	--status-neutral-fg: var(--gray-600);
 }
 
 [data-theme='dark'] {
 	color-scheme: dark;
-
-	--btn-secondary-bg: var(--navy-500);
-	--btn-secondary-hover: var(--navy-300);
-	--btn-disabled-bg: rgba(255, 255, 255, 0.08);
-	--btn-disabled-fg: var(--text-tertiary);
-	--ghost-hover: rgba(255, 255, 255, 0.08);
-	--bg-input-disabled: rgba(255, 255, 255, 0.05);
-
-	--status-success-bg: color-mix(in srgb, var(--success-light) 14%, transparent);
-	--status-warning-bg: color-mix(in srgb, var(--warning-light) 14%, transparent);
-	--status-danger-bg: color-mix(in srgb, var(--danger-light) 14%, transparent);
-	--status-info-bg: color-mix(in srgb, var(--info-light) 14%, transparent);
-	--status-neutral-bg: rgba(255, 255, 255, 0.08);
-	--status-neutral-fg: var(--gray-400);
 }
 
 *,
