@@ -10,7 +10,7 @@ import {
   RefreshCw,
   TriangleAlert,
   VolumeX,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { useSettingsStore } from '@/stores/settings'
 import AlertCard from '@/components/AlertCard.vue'
 import {

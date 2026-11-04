@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
-import { BellRing, Info, Settings } from 'lucide-vue-next'
+import { BellRing, Info, Settings } from '@lucide/vue'
 import icon from '@scene-ready/design-system/assets/scene-ready-icon.svg'
 import iconReversed from '@scene-ready/design-system/assets/scene-ready-icon-reversed.svg'
 </script>

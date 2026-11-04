@@ -20,10 +20,10 @@
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
-		"@scene-ready/design-system": "github:Scene-Ready/design-system#v0.3.0",
+		"@lucide/vue": "^1.68.0",
+		"@scene-ready/design-system": "https://codeload.github.com/Scene-Ready/design-system/tar.gz/refs/tags/v0.3.0",
 		"drizzle-orm": "^0.44.7",
 		"hono": "^4.9.12",
-		"lucide-vue-next": "^1.0.0",
 		"openai": "^6.7.0",
 		"pinia": "^3.0.4",
 		"postal-mime": "^2.6.0",

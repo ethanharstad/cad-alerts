@@ -507,7 +507,7 @@ import {
   Play,
   Square,
   TriangleAlert,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { THEME_OPTIONS } from '@/theme/theme'
 import { storeToRefs } from 'pinia'
 import { useSettingsStore } from '@/stores/settings'
