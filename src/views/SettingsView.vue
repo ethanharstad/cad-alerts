@@ -757,6 +757,13 @@ const logPagerTest = (entry: string) => {
 const percent = (fraction: number, signed = false) =>
   `${signed && fraction > 0 ? '+' : ''}${(fraction * 100).toFixed(1)}%`
 
+// When the decoder last reported each configured tone, so a measured tone can
+// be described by what the decoder actually did with it.
+const tonesHeardAt = new Map<number, number>()
+
+// Beyond this a measured tone is simply someone else's, not a near miss of ours.
+const NEAR_MISS = 3 * PAGER_TONE_TOLERANCE
+
 // What a steady tone measured, against the nearest configured one — so a tone
 // that is heard but not recognised shows how far off it is.
 const describeMeasuredTone = (tone: MeasuredTone): string => {
@@ -764,8 +771,19 @@ const describeMeasuredTone = (tone: MeasuredTone): string => {
   const near = compareToConfiguredTones(tone.hz, parsedPagerTones.value.sets)
   if (!near) return heard
   const off = `${percent(near.offset, true)} from ${near.role} (${near.hz} Hz)`
+  // The decoder reports a tone part-way through it, so a report since this
+  // tone began was this tone.
+  const heardAt = tonesHeardAt.get(near.hz)
+  const recognised = heardAt !== undefined && performance.now() - heardAt <= tone.ms + 500
+  if (recognised) {
+    return near.withinTolerance
+      ? `${heard} — recognised as ${near.role}, ${off}`
+      : `${heard} — recognised as ${near.role}, but only just: ${off}, at the edge of the ` +
+          `±${percent(PAGER_TONE_TOLERANCE)} allowed, so it may be missed. Configure ${tone.hz} Hz instead.`
+  }
+  if (Math.abs(near.offset) > NEAR_MISS) return `${heard} — not a configured tone`
   return near.withinTolerance
-    ? `${heard} — ${off}`
+    ? `${heard} — not recognised, though ${off}`
     : `${heard} — not recognised: ${off}, outside the ±${percent(PAGER_TONE_TOLERANCE)} allowed`
 }
 
@@ -780,6 +798,7 @@ const togglePagerTest = () => {
     return
   }
   pagerTestLog.value = []
+  tonesHeardAt.clear()
   pagerLevel.value = -60
   // The handle comes back at once, so a second click or leaving the page always
   // stops it — even while the input is still opening.
@@ -797,7 +816,10 @@ const togglePagerTest = () => {
           onChange: on => logPagerTest(on ? 'Playing the pager audio' : 'Pager audio ended'),
         }
       : undefined,
-    onTone: hz => logPagerTest(`Tone heard: ${hz} Hz`),
+    onTone: hz => {
+      tonesHeardAt.set(hz, performance.now())
+      logPagerTest(`Tone heard: ${hz} Hz`)
+    },
     onSteadyTone: tone => logPagerTest(describeMeasuredTone(tone)),
     onInputProcessing: active => {
       if (active.length > 0) {
