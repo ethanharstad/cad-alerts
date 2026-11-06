@@ -1,7 +1,8 @@
 import type { PagerToneSet } from '../../shared/pagerTones'
 import { createPagerToneDetector } from './pagerToneDetector'
 import { listDevices, matchSavedDevice } from './outputDevice'
-import { createPagerBroadcastGate, PAGER_BROADCAST_PREROLL_MS } from './pagerBroadcast'
+import { createPagerBroadcastGate } from './pagerBroadcast'
+import { createToneMeter, type MeasuredTone, type ToneMeter } from './toneMeter'
 
 /**
  * Listens to the pager audio — the pager's or receiver's audio out, wired into
@@ -44,6 +45,17 @@ export interface PagerMonitorOptions {
 	onStatus?: (status: PagerMonitorStatus, detail?: string) => void
 	/** Input level in dBFS, about ten times a second, for a level meter. */
 	onLevel?: (dbfs: number) => void
+	/**
+	 * Every steady tone heard, configured or not, with its measured frequency
+	 * and length — for setup screens (see `toneMeter.ts`).
+	 */
+	onSteadyTone?: (tone: MeasuredTone) => void
+	/**
+	 * Once the input is open: the speech processing the browser still applies
+	 * to it despite being asked not to (any of `echoCancellation`,
+	 * `noiseSuppression`, `autoGainControl`). It can remove a steady tone.
+	 */
+	onInputProcessing?: (active: string[]) => void
 	/**
 	 * Play the pager audio out loud when a page is matched (see
 	 * `pagerBroadcast.ts`). Off when absent: the input is only listened to.
@@ -143,6 +155,7 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 	let ctx: AudioContext | null = null
 	// Ends a broadcast in progress when the monitor stops.
 	let onBroadcastStop: (() => void) | null = null
+	let toneMeter: ToneMeter | null = null
 
 	const setStatus = (next: PagerMonitorStatus, detail?: string) => {
 		if (stopped && next !== 'stopped') return
@@ -173,6 +186,7 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 			setStatus('stopped')
 			stopped = true
 			onBroadcastStop?.()
+			toneMeter?.flush()
 			release()
 		},
 	}
@@ -218,6 +232,14 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 		// Stopped while the input was opening: let it go straight away.
 		if (stopped) return release()
 
+		if (options.onInputProcessing) {
+			const settings = (stream.getAudioTracks()[0]?.getSettings?.() ?? {}) as Record<string, unknown>
+			const active = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(
+				(name) => settings[name] === true,
+			)
+			options.onInputProcessing(active)
+		}
+
 		for (const track of stream.getAudioTracks()) {
 			track.addEventListener('ended', () => {
 				inputLost = true
@@ -244,19 +266,15 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 			mute.gain.value = 0
 			source.connect(tap).connect(mute).connect(audio.destination)
 
-			// The broadcast path: the input, running a little behind so the tones
-			// that set it off are heard too, through a gain that is shut until a
+			// The broadcast path: the live input through a gain that is shut until a
 			// page is matched.
 			const broadcast = options.broadcast
 			const gate = createPagerBroadcastGate()
 			let broadcastGain: GainNode | null = null
 			if (broadcast) {
-				const preroll = PAGER_BROADCAST_PREROLL_MS / 1000
-				const delay = audio.createDelay(preroll + 1)
-				delay.delayTime.value = preroll
 				broadcastGain = audio.createGain()
 				broadcastGain.gain.value = 0
-				source.connect(delay).connect(broadcastGain).connect(audio.destination)
+				source.connect(broadcastGain).connect(audio.destination)
 				onBroadcastStop = () => {
 					if (gate.isOpen) {
 						gate.close()
@@ -275,8 +293,7 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 					if (broadcast && broadcastGain) {
 						const wasOpen = gate.isOpen
 						gate.open(performance.now())
-						// Fade in now (any fade-out still scheduled is dropped); what plays
-						// is the delayed input, so it starts before the tones did.
+						// Fade in now; any fade-out still under way is dropped.
 						const gain = broadcastGain.gain
 						gain.cancelScheduledValues(audio.currentTime)
 						gain.setTargetAtTime(1, audio.currentTime, 0.01)
@@ -287,6 +304,11 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 				onTone: options.onTone,
 			})
 
+			const onSteadyTone = options.onSteadyTone
+			if (onSteadyTone) {
+				toneMeter = createToneMeter({ sampleRate: audio.sampleRate, onTone: onSteadyTone })
+			}
+
 			let sumSquares = 0
 			let count = 0
 			let lastLevel = 0
@@ -294,6 +316,7 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 				if (stopped) return
 				const samples = event.data
 				detector.process(samples)
+				toneMeter?.process(samples)
 				if (!options.onLevel && !gate.isOpen) return
 				for (let i = 0; i < samples.length; i++) sumSquares += samples[i]! * samples[i]!
 				count += samples.length
@@ -303,10 +326,9 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 					const dbfs = rms > 0 ? 20 * Math.log10(rms) : -Infinity
 					options.onLevel?.(dbfs)
 					if (gate.level(dbfs, now) && broadcastGain) {
-						// The channel went quiet on the live input; the delayed copy
-						// still has the tail of the transmission to play.
-						const at = audio.currentTime + PAGER_BROADCAST_PREROLL_MS / 1000
-						broadcastGain.gain.setTargetAtTime(0, at, 0.05)
+						// The channel has gone quiet: fade out.
+						broadcastGain.gain.cancelScheduledValues(audio.currentTime)
+						broadcastGain.gain.setTargetAtTime(0, audio.currentTime, 0.05)
 						broadcast?.onChange?.(false)
 					}
 					sumSquares = 0

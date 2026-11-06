@@ -108,3 +108,36 @@ export function describePagerToneSet(set: PagerToneSet): string {
 	const tones = `${set.a} / ${set.b} Hz`
 	return set.label ? `${set.label} (${tones})` : tones
 }
+
+export interface ToneComparison {
+	/** The configured tone nearest the one measured. */
+	hz: number
+	/** Which tone of which set it is, e.g. `tone B of Station 1`. */
+	role: string
+	/** Measured minus configured, as a fraction of the configured tone. */
+	offset: number
+	/** Whether the offset is within what the decoder accepts. */
+	withinTolerance: boolean
+}
+
+/**
+ * Compare a measured tone with the configured ones, for setup screens: which
+ * one it is nearest, and whether it is close enough to be recognised. `null`
+ * when nothing is configured.
+ */
+export function compareToConfiguredTones(hz: number, sets: readonly PagerToneSet[]): ToneComparison | null {
+	let best: ToneComparison | null = null
+	for (const set of sets) {
+		for (const [which, tone] of [['A', set.a], ['B', set.b]] as const) {
+			const offset = (hz - tone) / tone
+			if (best && Math.abs(offset) >= Math.abs(best.offset)) continue
+			best = {
+				hz: tone,
+				role: `tone ${which} of ${set.label || `${set.a} / ${set.b} Hz`}`,
+				offset,
+				withinTolerance: Math.abs(offset) <= PAGER_TONE_TOLERANCE,
+			}
+		}
+	}
+	return best
+}

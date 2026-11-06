@@ -10,16 +10,13 @@
  * with open squelch — steady hiss — cannot hold the PA open for good. Another
  * match while open starts the count afresh.
  *
- * Playback runs `PAGER_BROADCAST_PREROLL_MS` behind the live input (a delay
- * line in the monitor), so the tones that set it off are heard too; the decoder
- * only recognises a page part-way through tone B.
+ * Playback is live, so it starts part-way through tone B, when the decoder
+ * recognises the page; the tones themselves are not repeated.
  *
  * Pure: it is driven with timestamps and input levels and never touches the Web
  * Audio API, so the tests can step it through a page.
  */
 
-/** How far behind the live input the broadcast plays. */
-export const PAGER_BROADCAST_PREROLL_MS = 2500
 /** Quiet this long after the last sound and the broadcast ends. */
 export const DEFAULT_BROADCAST_SILENCE_MS = 5000
 /** The longest one broadcast may last. */
