@@ -4,6 +4,7 @@ import {
 	parsePagerToneSets,
 	formatPagerToneSets,
 	describePagerToneSet,
+	compareToConfiguredTones,
 } from './pagerTones'
 
 describe('parsePagerToneSets', () => {
@@ -68,5 +69,31 @@ describe('describePagerToneSet', () => {
 	it('names a set by its label and tones, or tones alone', () => {
 		expect(describePagerToneSet({ a: 330.5, b: 569.1, label: 'Station 1' })).toBe('Station 1 (330.5 / 569.1 Hz)')
 		expect(describePagerToneSet({ a: 330.5, b: 569.1, label: '' })).toBe('330.5 / 569.1 Hz')
+	})
+})
+
+describe('compareToConfiguredTones', () => {
+	const sets = [
+		{ a: 330.5, b: 569.1, label: 'Station 1' },
+		{ a: 1092.4, b: 1404.7, label: '' },
+	]
+
+	it('finds the nearest configured tone and how far off it is', () => {
+		const near = compareToConfiguredTones(571.4, sets)!
+		expect(near.hz).toBe(569.1)
+		expect(near.role).toBe('tone B of Station 1')
+		expect(near.offset).toBeCloseTo(0.004, 3)
+		expect(near.withinTolerance).toBe(true)
+	})
+
+	it('flags a tone too far off to be recognised', () => {
+		const far = compareToConfiguredTones(1450, sets)!
+		expect(far.role).toBe('tone B of 1092.4 / 1404.7 Hz')
+		expect(far.offset).toBeCloseTo(0.032, 3)
+		expect(far.withinTolerance).toBe(false)
+	})
+
+	it('is null with nothing configured', () => {
+		expect(compareToConfiguredTones(500, [])).toBeNull()
 	})
 })

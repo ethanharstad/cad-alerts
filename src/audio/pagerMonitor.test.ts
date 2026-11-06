@@ -116,9 +116,9 @@ describe('startPagerMonitor', () => {
 		await flush()
 		expect(monitor.status).toBe('listening')
 		expect(graph.ctx.setSinkId).toHaveBeenCalledWith('pa')
-		// Shut until a page is heard, and running behind the input.
+		// Live, and shut until a page is heard.
 		expect(graph.broadcastGain().gain.value).toBe(0)
-		expect(graph.delay().delayTime.value).toBe(2.5)
+		expect(graph.links.get(graph.source())).toBe(graph.broadcastGain())
 
 		const feed = (samples: Float32Array) => {
 			for (let i = 0; i + CHUNK <= samples.length; i += CHUNK) {
@@ -138,10 +138,10 @@ describe('startPagerMonitor', () => {
 		expect(changes).toEqual([true])
 		feed(new Float32Array(FS * 6))
 		expect(changes).toEqual([true, false])
-		// The fade-out waits for the delayed copy to finish playing.
+		// Faded out as soon as the channel went quiet.
 		const fadeOut = graph.broadcastGain().gain.setTargetAtTime.mock.calls.at(-1)!
 		expect(fadeOut[0]).toBe(0)
-		expect(fadeOut[1]).toBeCloseTo(closedAt + 2.5)
+		expect(fadeOut[1]).toBeCloseTo(closedAt)
 		monitor.stop()
 	})
 
@@ -174,7 +174,8 @@ describe('startPagerMonitor', () => {
 		const graph = stubAudioGraph()
 		const monitor = startPagerMonitor(baseOptions)
 		await flush()
-		expect(graph.delays).toHaveLength(0)
+		// Only the muted gain that keeps the tap running.
+		expect(graph.gains).toHaveLength(1)
 		expect(graph.ctx.setSinkId).not.toHaveBeenCalled()
 		monitor.stop()
 	})
@@ -190,7 +191,7 @@ function tone(hz: number, ms: number, amp = 0.5): Float32Array {
 }
 
 // Just enough Web Audio for the monitor to build its graph, recording the nodes
-// so a test can reach the tap, the delay line and the broadcast gain.
+// so a test can reach the input, the tap and the broadcast gain.
 function stubAudioGraph() {
 	const track = { stop: vi.fn(), addEventListener: vi.fn() }
 	const stream = { getTracks: () => [track], getAudioTracks: () => [track] }
@@ -199,7 +200,7 @@ function stubAudioGraph() {
 	})
 
 	const param = () => ({ value: 0, cancelScheduledValues: vi.fn(), setTargetAtTime: vi.fn() })
-	type FakeNode = { connect: (next: FakeNode) => FakeNode; gain: ReturnType<typeof param>; delayTime: ReturnType<typeof param> }
+	type FakeNode = { connect: (next: FakeNode) => FakeNode; gain: ReturnType<typeof param> }
 	const links = new Map<FakeNode, FakeNode>()
 	const node = (): FakeNode => {
 		const n: FakeNode = {
@@ -208,11 +209,11 @@ function stubAudioGraph() {
 				return next
 			},
 			gain: param(),
-			delayTime: param(),
 		}
 		return n
 	}
-	const delays: FakeNode[] = []
+	const gains: FakeNode[] = []
+	const sources: FakeNode[] = []
 	const taps: { port: { onmessage: ((e: MessageEvent) => void) | null } }[] = []
 	const ctx = {
 		sampleRate: FS,
@@ -220,12 +221,15 @@ function stubAudioGraph() {
 		state: 'running',
 		destination: node(),
 		audioWorklet: { addModule: async () => {} },
-		createMediaStreamSource: () => node(),
-		createGain: () => node(),
-		createDelay: () => {
-			const d = node()
-			delays.push(d)
-			return d
+		createMediaStreamSource: () => {
+			const n = node()
+			sources.push(n)
+			return n
+		},
+		createGain: () => {
+			const g = node()
+			gains.push(g)
+			return g
 		},
 		setSinkId: vi.fn(async () => {}),
 		resume: async () => {},
@@ -248,9 +252,11 @@ function stubAudioGraph() {
 	)
 	return {
 		ctx,
-		delays,
+		gains,
+		links,
+		source: () => sources[0]!,
 		tap: () => taps[0]!,
-		delay: () => delays[0]!,
-		broadcastGain: () => links.get(delays[0]!)!,
+		// The first gain mutes the tap; the second is the broadcast.
+		broadcastGain: () => gains[1]!,
 	}
 }

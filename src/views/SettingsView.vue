@@ -184,11 +184,10 @@
             <span>Play the pager audio when the tones are heard</span>
           </label>
           <p class="help-text">
-            Plays the dispatch on the alert output above, starting a moment before the
-            tones so they are heard too, until the channel has been quiet for a few
-            seconds (three minutes at most). Use it when the pager audio isn't heard in
-            the room any other way. It plays a couple of seconds behind the radio, and
-            only Chromium-based browsers can send it to a chosen output — others use the
+            Plays the dispatch live on the alert output above, from the moment the page is
+            recognised until the channel has been quiet for a few seconds (three minutes
+            at most). Use it when the pager audio isn't heard in the room any other way.
+            Only Chromium-based browsers can send it to a chosen output — others use the
             system default. Test Listening below plays it too.
           </p>
         </div>
@@ -435,7 +434,10 @@
               Test listening uses this browser's pager audio input and the tone sets as typed
               above (saved or not). Have dispatch send a test page, or play the tones into the
               input: each configured tone heard is listed, and a full page shows as a match.
-              Aim for a level mostly in the green while audio is playing.
+              Every steady tone is also measured — its frequency, length and level, and how
+              far it is from the nearest configured tone — so a tone that is not recognised
+              shows why: off frequency, cut short, or too quiet. Aim for a level mostly in
+              the green while audio is playing.
             </p>
           </div>
 
@@ -560,6 +562,8 @@ import {
   parsePagerToneSets,
   formatPagerToneSets,
   describePagerToneSet,
+  compareToConfiguredTones,
+  PAGER_TONE_TOLERANCE,
   MAX_PAGER_TONE_SETS,
 } from '../../shared/pagerTones'
 import { playClip } from '@/audio/play'
@@ -569,6 +573,7 @@ import {
   type PagerMonitor,
   type PagerMonitorStatus,
 } from '@/audio/pagerMonitor'
+import type { MeasuredTone } from '@/audio/toneMeter'
 import {
   supportsOutputSelection,
   listOutputDevices,
@@ -746,7 +751,22 @@ const pagerTestStatus = computed(() => {
 
 const logPagerTest = (entry: string) => {
   const time = new Date().toLocaleTimeString()
-  pagerTestLog.value = [`${time} — ${entry}`, ...pagerTestLog.value].slice(0, 12)
+  pagerTestLog.value = [`${time} — ${entry}`, ...pagerTestLog.value].slice(0, 20)
+}
+
+const percent = (fraction: number, signed = false) =>
+  `${signed && fraction > 0 ? '+' : ''}${(fraction * 100).toFixed(1)}%`
+
+// What a steady tone measured, against the nearest configured one — so a tone
+// that is heard but not recognised shows how far off it is.
+const describeMeasuredTone = (tone: MeasuredTone): string => {
+  const heard = `Steady tone ${tone.hz} Hz, ${(tone.ms / 1000).toFixed(1)} s at ${tone.dbfs} dBFS`
+  const near = compareToConfiguredTones(tone.hz, parsedPagerTones.value.sets)
+  if (!near) return heard
+  const off = `${percent(near.offset, true)} from ${near.role} (${near.hz} Hz)`
+  return near.withinTolerance
+    ? `${heard} — ${off}`
+    : `${heard} — not recognised: ${off}, outside the ±${percent(PAGER_TONE_TOLERANCE)} allowed`
 }
 
 const stopPagerTest = () => {
@@ -778,6 +798,14 @@ const togglePagerTest = () => {
         }
       : undefined,
     onTone: hz => logPagerTest(`Tone heard: ${hz} Hz`),
+    onSteadyTone: tone => logPagerTest(describeMeasuredTone(tone)),
+    onInputProcessing: active => {
+      if (active.length > 0) {
+        logPagerTest(
+          `Warning: the browser is still applying ${active.join(', ')} to this input, which can remove steady tones`,
+        )
+      }
+    },
     onStatus: (status, detail) => {
       pagerTestState.value = status
       pagerTestDetail.value = detail ?? ''
