@@ -51,7 +51,10 @@ organization through an authenticated API.
   announcer's `preempt()` aborts the playing pre-alert (never replayed) and
   holds further announcements for `DEFAULT_PREEMPT_HOLD_MS`. The detector is a
   pure Goertzel decoder tested on synthesized audio; the monitor is the thin
-  getUserMedia/AudioWorklet glue (speech processing must stay off).
+  getUserMedia/AudioWorklet glue (speech processing must stay off). An optional
+  per-browser broadcast (`src/audio/pagerBroadcast.ts`) plays the pager audio on
+  the alert output from a match until the channel is quiet (or a cap), through a
+  delay line so the tones themselves are heard; the gate logic is pure and tested.
 - **Self-update** (`shared/build.ts`, `src/update/reload.ts`): `vite build`
   stamps one build id (`GITHUB_SHA`) into both the SPA and the Worker. Every
   API response carries it as `X-Build-Id`; a dashboard that sees a different id

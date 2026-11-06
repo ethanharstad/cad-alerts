@@ -1,6 +1,7 @@
 import type { PagerToneSet } from '../../shared/pagerTones'
 import { createPagerToneDetector } from './pagerToneDetector'
 import { listDevices, matchSavedDevice } from './outputDevice'
+import { createPagerBroadcastGate, PAGER_BROADCAST_PREROLL_MS } from './pagerBroadcast'
 
 /**
  * Listens to the pager audio — the pager's or receiver's audio out, wired into
@@ -43,6 +44,18 @@ export interface PagerMonitorOptions {
 	onStatus?: (status: PagerMonitorStatus, detail?: string) => void
 	/** Input level in dBFS, about ten times a second, for a level meter. */
 	onLevel?: (dbfs: number) => void
+	/**
+	 * Play the pager audio out loud when a page is matched (see
+	 * `pagerBroadcast.ts`). Off when absent: the input is only listened to.
+	 */
+	broadcast?: PagerBroadcastOptions
+}
+
+export interface PagerBroadcastOptions {
+	/** Output device id; '' plays on the system default output. */
+	outputDeviceId: string
+	/** Called when the broadcast starts and stops. */
+	onChange?: (broadcasting: boolean) => void
 }
 
 export interface PagerMonitor {
@@ -101,6 +114,21 @@ registerProcessor('pager-tap', PagerTap)
 const LEVEL_INTERVAL_MS = 100
 
 /**
+ * Send the context's output to `deviceId`. Only Chromium can route an
+ * AudioContext; elsewhere, or when the device is missing, it plays on the system
+ * default — a missing device must never silence the broadcast.
+ */
+async function routeTo(ctx: AudioContext, deviceId: string): Promise<void> {
+	const routable = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+	if (!deviceId || typeof routable.setSinkId !== 'function') return
+	try {
+		await routable.setSinkId(deviceId)
+	} catch (err) {
+		console.warn('Pager broadcast output unavailable; using the system default:', err)
+	}
+}
+
+/**
  * Start listening. Returns at once, with status `starting`, and opens the input
  * in the background, so the caller always holds a handle it can stop — there is
  * no window in which a start can be superseded or abandoned and leave the
@@ -113,6 +141,8 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 	let inputLost = false
 	let stream: MediaStream | null = null
 	let ctx: AudioContext | null = null
+	// Ends a broadcast in progress when the monitor stops.
+	let onBroadcastStop: (() => void) | null = null
 
 	const setStatus = (next: PagerMonitorStatus, detail?: string) => {
 		if (stopped && next !== 'stopped') return
@@ -142,6 +172,7 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 			if (stopped) return
 			setStatus('stopped')
 			stopped = true
+			onBroadcastStop?.()
 			release()
 		},
 	}
@@ -204,22 +235,57 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 			}
 			if (stopped) return release()
 
+			const audio = ctx
+			const source = audio.createMediaStreamSource(stream)
+			const tap = new AudioWorkletNode(audio, 'pager-tap', { numberOfOutputs: 1 })
+			// Pull the tap through a muted gain so the graph is rendered; the tap
+			// itself is never heard.
+			const mute = audio.createGain()
+			mute.gain.value = 0
+			source.connect(tap).connect(mute).connect(audio.destination)
+
+			// The broadcast path: the input, running a little behind so the tones
+			// that set it off are heard too, through a gain that is shut until a
+			// page is matched.
+			const broadcast = options.broadcast
+			const gate = createPagerBroadcastGate()
+			let broadcastGain: GainNode | null = null
+			if (broadcast) {
+				const preroll = PAGER_BROADCAST_PREROLL_MS / 1000
+				const delay = audio.createDelay(preroll + 1)
+				delay.delayTime.value = preroll
+				broadcastGain = audio.createGain()
+				broadcastGain.gain.value = 0
+				source.connect(delay).connect(broadcastGain).connect(audio.destination)
+				onBroadcastStop = () => {
+					if (gate.isOpen) {
+						gate.close()
+						broadcast.onChange?.(false)
+					}
+				}
+				await routeTo(audio, broadcast.outputDeviceId)
+				if (stopped) return release()
+			}
+
 			const detector = createPagerToneDetector({
-				sampleRate: ctx.sampleRate,
+				sampleRate: audio.sampleRate,
 				sets: options.sets,
 				onMatch: (set) => {
-					if (!stopped) options.onMatch(set)
+					if (stopped) return
+					if (broadcast && broadcastGain) {
+						const wasOpen = gate.isOpen
+						gate.open(performance.now())
+						// Fade in now (any fade-out still scheduled is dropped); what plays
+						// is the delayed input, so it starts before the tones did.
+						const gain = broadcastGain.gain
+						gain.cancelScheduledValues(audio.currentTime)
+						gain.setTargetAtTime(1, audio.currentTime, 0.01)
+						if (!wasOpen) broadcast.onChange?.(true)
+					}
+					options.onMatch(set)
 				},
 				onTone: options.onTone,
 			})
-
-			const source = ctx.createMediaStreamSource(stream)
-			const tap = new AudioWorkletNode(ctx, 'pager-tap', { numberOfOutputs: 1 })
-			// Pull the tap through a muted gain so the graph is rendered; nothing is
-			// actually played back.
-			const mute = ctx.createGain()
-			mute.gain.value = 0
-			source.connect(tap).connect(mute).connect(ctx.destination)
 
 			let sumSquares = 0
 			let count = 0
@@ -228,13 +294,21 @@ export function startPagerMonitor(options: PagerMonitorOptions): PagerMonitor {
 				if (stopped) return
 				const samples = event.data
 				detector.process(samples)
-				if (!options.onLevel) return
+				if (!options.onLevel && !gate.isOpen) return
 				for (let i = 0; i < samples.length; i++) sumSquares += samples[i]! * samples[i]!
 				count += samples.length
 				const now = performance.now()
 				if (now - lastLevel >= LEVEL_INTERVAL_MS) {
 					const rms = Math.sqrt(sumSquares / Math.max(1, count))
-					options.onLevel(rms > 0 ? 20 * Math.log10(rms) : -Infinity)
+					const dbfs = rms > 0 ? 20 * Math.log10(rms) : -Infinity
+					options.onLevel?.(dbfs)
+					if (gate.level(dbfs, now) && broadcastGain) {
+						// The channel went quiet on the live input; the delayed copy
+						// still has the tail of the transmission to play.
+						const at = audio.currentTime + PAGER_BROADCAST_PREROLL_MS / 1000
+						broadcastGain.gain.setTargetAtTime(0, at, 0.05)
+						broadcast?.onChange?.(false)
+					}
 					sumSquares = 0
 					count = 0
 					lastLevel = now

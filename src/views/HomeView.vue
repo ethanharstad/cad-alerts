@@ -267,7 +267,8 @@ const startStream = () => {
 // never out from under an operator's pause — a reload would resume the stream
 // they deliberately stopped. A paused dashboard picks the update up on resume.
 const reloadScheduler = createReloadScheduler({
-  isBusy: () => announcer.isBusy || announcer.isHolding || isPaused.value,
+  isBusy: () =>
+    announcer.isBusy || announcer.isHolding || pagerBroadcasting.value || isPaused.value,
 })
 
 // ---- Pager monitor ----
@@ -283,6 +284,8 @@ const pagerState = ref<PagerState>('off')
 const pagerDetail = ref<string>('')
 // The page last heard, shown while its hold lasts.
 const pagerHeard = ref<string | null>(null)
+// Whether the pager audio is playing on the alert output (the broadcast option).
+const pagerBroadcasting = ref(false)
 let pagerHeardTimer: ReturnType<typeof setTimeout> | null = null
 
 const onPagerMatch = (set: PagerToneSet) => {
@@ -300,6 +303,7 @@ const stopPager = () => {
   pagerMonitor?.stop()
   pagerMonitor = null
   pagerState.value = 'off'
+  pagerBroadcasting.value = false
 }
 
 const startPager = () => {
@@ -323,6 +327,14 @@ const startPager = () => {
     },
     sets,
     onMatch: onPagerMatch,
+    broadcast: settingsStore.pagerBroadcastEnabled
+      ? {
+          outputDeviceId: settingsStore.audioOutputDeviceId,
+          onChange: (on) => {
+            pagerBroadcasting.value = on
+          },
+        }
+      : undefined,
     onStatus: (status, detail) => {
       // Stopping is reported as 'off' by stopPager itself.
       if (status === 'stopped') return
@@ -342,7 +354,7 @@ const onDeviceChange = () => {
 const pagerLabel = computed(() => {
   switch (pagerState.value) {
     case 'listening':
-      return 'Pager: listening'
+      return pagerBroadcasting.value ? 'Pager: on air' : 'Pager: listening'
     case 'starting':
       return 'Pager: starting…'
     case 'suspended':
@@ -404,7 +416,7 @@ const streamBadgeClass = computed(() => {
 const pagerBadgeClass = computed(() => {
   switch (pagerState.value) {
     case 'listening':
-      return 'badge-success'
+      return pagerBroadcasting.value ? 'badge-info' : 'badge-success'
     case 'starting':
       return ''
     default:
@@ -544,6 +556,7 @@ onUnmounted(() => {
           <p>
             Pager tones heard — <strong>{{ pagerHeard }}</strong>. Pre-alerts are held
             while dispatch is on the air.
+            <template v-if="pagerBroadcasting">The pager audio is playing here.</template>
           </p>
         </div>
       </div>

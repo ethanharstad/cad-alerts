@@ -174,6 +174,25 @@
           </p>
         </div>
 
+        <div v-if="settingsStore.pagerMonitorEnabled" class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input
+              id="pagerBroadcastEnabled"
+              v-model="settingsStore.pagerBroadcastEnabled"
+              type="checkbox"
+            />
+            <span>Play the pager audio when the tones are heard</span>
+          </label>
+          <p class="help-text">
+            Plays the dispatch on the alert output above, starting a moment before the
+            tones so they are heard too, until the channel has been quiet for a few
+            seconds (three minutes at most). Use it when the pager audio isn't heard in
+            the room any other way. It plays a couple of seconds behind the radio, and
+            only Chromium-based browsers can send it to a chosen output — others use the
+            system default. Test Listening below plays it too.
+          </p>
+        </div>
+
         <div class="form-group">
           <label class="field-label" for="theme">Display Theme</label>
           <select id="theme" v-model="settingsStore.theme" class="input">
@@ -752,6 +771,12 @@ const togglePagerTest = () => {
     },
     sets: parsedPagerTones.value.sets,
     onMatch: set => logPagerTest(`Page matched: ${describePagerToneSet(set)}`),
+    broadcast: settingsStore.pagerBroadcastEnabled
+      ? {
+          outputDeviceId: settingsStore.audioOutputDeviceId,
+          onChange: on => logPagerTest(on ? 'Playing the pager audio' : 'Pager audio ended'),
+        }
+      : undefined,
     onTone: hz => logPagerTest(`Tone heard: ${hz} Hz`),
     onStatus: (status, detail) => {
       pagerTestState.value = status
