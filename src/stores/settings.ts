@@ -22,6 +22,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const pagerMonitorEnabled = persisted('pagerMonitorEnabled', false)
   const pagerInputDeviceId = persisted('pagerInputDeviceId', '')
   const pagerInputDeviceLabel = persisted('pagerInputDeviceLabel', '')
+  // Also play the pager audio on the alert output once the tones are heard,
+  // until the channel goes quiet.
+  const pagerBroadcastEnabled = persisted('pagerBroadcastEnabled', false)
   // Light/dark display, per browser; 'system' follows the computer's setting.
   const theme = persisted<ThemePreference>('theme', 'system')
 
@@ -37,6 +40,7 @@ export const useSettingsStore = defineStore('settings', () => {
     pagerMonitorEnabled.value = false
     pagerInputDeviceId.value = ''
     pagerInputDeviceLabel.value = ''
+    pagerBroadcastEnabled.value = false
     theme.value = 'system'
   }
 
@@ -50,6 +54,7 @@ export const useSettingsStore = defineStore('settings', () => {
     pagerMonitorEnabled,
     pagerInputDeviceId,
     pagerInputDeviceLabel,
+    pagerBroadcastEnabled,
     theme,
     clearSettings,
   }
